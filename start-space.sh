@@ -27,28 +27,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "[space] starting mysql..."
-mkdir -p /run/mysqld /var/lib/mysql
-chown -R mysql:mysql /run/mysqld /var/lib/mysql
+wait_mysql() {
+    for _ in $(seq 1 90); do
+        if mysqladmin --protocol=socket --socket="$MYSQL_SOCKET" ping --silent >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
 
-if [ ! -d /var/lib/mysql/mysql ]; then
-    mariadb-install-db --user=mysql --datadir=/var/lib/mysql > /tmp/mariadb-init.log
-fi
-
-mysqld --user=mysql --datadir=/var/lib/mysql --socket="$MYSQL_SOCKET" --port="$MYSQL_PORT" --bind-address=127.0.0.1 &
-MYSQL_PID=$!
-
-for _ in $(seq 1 90); do
-    if mysqladmin --protocol=socket --socket="$MYSQL_SOCKET" ping --silent >/dev/null 2>&1; then
-        break
+start_mysql() {
+    mysqld --user=mysql --datadir=/var/lib/mysql --socket="$MYSQL_SOCKET" --port="$MYSQL_PORT" --bind-address=127.0.0.1 &
+    MYSQL_PID=$!
+    if ! wait_mysql; then
+        echo "[space] mysql startup failed"
+        exit 1
     fi
-    sleep 1
-done
-
-if ! mysqladmin --protocol=socket --socket="$MYSQL_SOCKET" ping --silent >/dev/null 2>&1; then
-    echo "[space] mysql startup failed"
-    exit 1
-fi
+}
 
 mysql_socket() {
     mysql --protocol=socket --socket="$MYSQL_SOCKET" -uroot "$@"
@@ -65,6 +61,30 @@ mysql_exec() {
         mysql_tcp "$@"
     fi
 }
+
+echo "[space] starting mysql..."
+mkdir -p /run/mysqld /var/lib/mysql
+chown -R mysql:mysql /run/mysqld /var/lib/mysql
+
+if [ ! -d /var/lib/mysql/mysql ]; then
+    mariadb-install-db --user=mysql --datadir=/var/lib/mysql --auth-root-authentication-method=normal > /tmp/mariadb-init.log
+fi
+
+start_mysql
+
+if ! mysql_socket -e "SELECT 1" >/dev/null 2>&1 && ! mysql_tcp -e "SELECT 1" >/dev/null 2>&1; then
+    echo "[space] mysql root auth failed, reinitializing data dir..."
+    kill "$MYSQL_PID" || true
+    wait "$MYSQL_PID" || true
+    rm -rf /var/lib/mysql/*
+    mariadb-install-db --user=mysql --datadir=/var/lib/mysql --auth-root-authentication-method=normal > /tmp/mariadb-init.log
+    start_mysql
+fi
+
+if ! mysql_socket -e "SELECT 1" >/dev/null 2>&1 && ! mysql_tcp -e "SELECT 1" >/dev/null 2>&1; then
+    echo "[space] mysql root auth still failed"
+    exit 1
+fi
 
 mysql_exec -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';" || true
 mysql_exec -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';" || true
