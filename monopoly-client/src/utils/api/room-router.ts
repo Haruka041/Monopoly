@@ -2,12 +2,17 @@ import { __MONOPOLYSERVER__ } from "@G/global.config";
 import axios from "axios";
 
 export async function joinRoomApi(roomId: string) {
-	const { hostPeerId, needCreate, deleteIntervalMs } = (
-		await axios.get(`${__MONOPOLYSERVER__}/room-router/join`, {
-			params: { roomId },
-		})
-	).data as any;
-	return { hostPeerId, needCreate, deleteIntervalMs };
+	const res = (await axios.get(`${__MONOPOLYSERVER__}/room-router/join`, {
+		params: { roomId },
+	})) as any;
+
+	// 200: { status, data: {...} }, 202: { status, msg }
+	if (res?.data) {
+		const { hostPeerId, needCreate, deleteIntervalMs } = res.data;
+		return { hostPeerId, needCreate, deleteIntervalMs };
+	}
+
+	throw new Error(res?.msg || "服务器正在与房主建立联系, 请稍后重试");
 }
 
 export async function emitHostPeerId(roomId: string, hostPeerId: string, hostName: string, hostId: string) {

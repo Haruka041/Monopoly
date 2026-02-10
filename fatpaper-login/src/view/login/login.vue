@@ -27,6 +27,16 @@ const registerForm = reactive({
 	color: "#000000",
 });
 
+const createRegisterFormData = (encryptedPassword: string) => {
+	const formData = new FormData();
+	if (avatarFile.value) formData.append("avatar", avatarFile.value);
+	formData.append("useraccount", registerForm.useraccount);
+	formData.append("username", registerForm.username);
+	formData.append("password", encryptedPassword);
+	formData.append("color", registerForm.color);
+	return formData;
+};
+
 function handleFileChange(event: Event) {
 	const target = event.target as HTMLInputElement;
 	const file = target.files?.[0];
@@ -71,19 +81,30 @@ const handleRegister = async () => {
 		return;
 	}
 	if (registerForm.password === registerForm.confirmPassword) {
-		const formData = new FormData();
-		const epassword = await getEncryption(registerForm.password);
+		let epassword = await getEncryption(registerForm.password);
 		if (epassword && avatarFile.value) {
-			formData.append("avatar", avatarFile.value);
-			formData.append("useraccount", registerForm.useraccount);
-			formData.append("username", registerForm.username);
-			formData.append("password", epassword.toString());
-			formData.append("color", registerForm.color);
 			try {
+				const formData = createRegisterFormData(epassword.toString());
 				if (await apiRegister(formData)) {
 					loginForm.useraccount = registerForm.useraccount;
 					resetRegisterForm();
 					loginMode.value = true;
+				}
+			} catch (error: any) {
+				const msg = error?.response?.data?.msg;
+				if (typeof msg === "string" && msg.includes("客户端密码解密失败")) {
+					await getPublicKey();
+					epassword = await getEncryption(registerForm.password);
+					if (epassword) {
+						const retryFormData = createRegisterFormData(epassword.toString());
+						if (await apiRegister(retryFormData, true)) {
+							loginForm.useraccount = registerForm.useraccount;
+							resetRegisterForm();
+							loginMode.value = true;
+						}
+					}
+				} else {
+					throw error;
 				}
 			} finally {
 				isLoading.value = false;

@@ -10,7 +10,8 @@ export const __PROTOCOL__ = protocol;
 export const __MONOPOLYSERVER__ = "/monopoly-server";
 export const __USERSERVER__ = "/user-server";
 export const __LOGINPAGEURL__ = `${origin}/81/`;
-export const __ICE_SERVER_PATH__ = "ice-server";
+// PeerJS server endpoint lives under /peerjs behind the /ice-server reverse proxy prefix.
+export const __ICE_SERVER_PATH__ = "ice-server/peerjs";
 
 export const __FATPAPER_HOST__ = host;
 export const __ICE_SERVER_PORT__ = port;

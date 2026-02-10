@@ -64,6 +64,13 @@ export class MonopolyClient {
 
 	private sendHeartTime = 0;
 
+	private getErrorMessage(error: any, fallback = "服务器连接失败") {
+		if (typeof error === "string") return error;
+		if (error?.message) return error.message;
+		if (error?.response?.data?.msg) return error.response.data.msg;
+		return fallback;
+	}
+
 	public static getInstance(): MonopolyClient;
 	public static getInstance(options: MonopolyClientOptions): Promise<MonopolyClient>;
 	public static getInstance(options?: MonopolyClientOptions) {
@@ -124,7 +131,7 @@ export class MonopolyClient {
 				await this.linkToGameHost(hostPeerId);
 			}
 		} catch (e) {
-			FPMessage({ type: "error", message: "服务器连接失败" });
+			FPMessage({ type: "error", message: this.getErrorMessage(e, "服务器连接失败") });
 		}
 	}
 
@@ -289,7 +296,7 @@ export class MonopolyClient {
 				}
 			});
 		} catch (e: any) {
-			FPMessage({ type: "error", message: e });
+			FPMessage({ type: "error", message: this.getErrorMessage(e, "连接主机失败") });
 		}
 	}
 
