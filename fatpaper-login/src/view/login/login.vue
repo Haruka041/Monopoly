@@ -93,7 +93,12 @@ const handleRegister = async () => {
 			} catch (error: any) {
 				const msg = error?.response?.data?.msg;
 				if (typeof msg === "string" && msg.includes("客户端密码解密失败")) {
-					await getPublicKey();
+					const publicKeyFromError = error?.response?.data?.data?.publicKey;
+					if (typeof publicKeyFromError === "string" && publicKeyFromError.includes("BEGIN PUBLIC KEY")) {
+						localStorage.setItem("public-key", publicKeyFromError);
+					} else {
+						await getPublicKey();
+					}
 					epassword = await getEncryption(registerForm.password);
 					if (epassword) {
 						const retryFormData = createRegisterFormData(epassword.toString());

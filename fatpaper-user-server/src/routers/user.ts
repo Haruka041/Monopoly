@@ -121,6 +121,11 @@ routerUser.get("/info", async (req, res, next) => {
 // });
 
 routerUser.get("/public-key", async (req, res, next) => {
+	res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+	res.setHeader("Pragma", "no-cache");
+	res.setHeader("Expires", "0");
+	res.setHeader("Surrogate-Control", "no-store");
+
 	const resMsg: ResInterface = {
 		status: 200,
 		data: publicKey,
@@ -164,9 +169,11 @@ routerUser.post("/login", async (req, res) => {
 			};
 			res.status(200).json(resContent);
 		} catch (e: any) {
+			const needKeyRefresh = typeof e?.message === "string" && e.message.includes("客户端密码解密失败");
 			const resContent: ResInterface = {
 				status: 400,
 				msg: e.message,
+				data: needKeyRefresh ? { publicKey } : undefined,
 			};
 			res.status(400).json(resContent);
 		}
@@ -224,9 +231,11 @@ routerUser.post("/register", avatarMulter.single("avatar"), async (req, res) => 
 			};
 			res.status(200).json(resContent);
 		} catch (e: any) {
+			const needKeyRefresh = typeof e?.message === "string" && e.message.includes("客户端密码解密失败");
 			const resContent: ResInterface = {
 				status: 500,
 				msg: e.message || "数据库处理错误",
+				data: needKeyRefresh ? { publicKey } : undefined,
 			};
 			res.status(500).json(resContent);
 		}
