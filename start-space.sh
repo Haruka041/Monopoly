@@ -392,14 +392,14 @@ start_log_backup_watcher
 echo "[space] starting user-server..."
 (
     cd /app/fatpaper-user-server
-    npm run start 2>&1 | sed -u 's/^/[user-server] /'
+    node dist/fatpaper-user-server/app.js --omit=dev 2>&1 | sed -u 's/^/[user-server] /'
 ) | tee -a "${APP_LOG_FILE}" &
 USER_SERVER_PID=$!
 
 echo "[space] starting monopoly-server..."
 (
     cd /app/monopoly-server
-    npm run start 2>&1 | sed -u 's/^/[monopoly-server] /'
+    node dist/monopoly-server/app.js 2>&1 | sed -u 's/^/[monopoly-server] /'
 ) | tee -a "${APP_LOG_FILE}" &
 MONOPOLY_SERVER_PID=$!
 

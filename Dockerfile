@@ -27,6 +27,8 @@ COPY --from=source /app /app
 
 RUN cd /app/fatpaper-user-server && npm install --include=dev --legacy-peer-deps
 RUN cd /app/monopoly-server && npm install --include=dev --legacy-peer-deps
+RUN cd /app/fatpaper-user-server && npx tsc
+RUN cd /app/monopoly-server && npx tsc
 
 RUN rm -rf /var/www/html && mkdir -p /var/www/monopoly-client /var/www/81 /var/www/82
 COPY --from=web-build /app/monopoly-client/dist /var/www/monopoly-client
