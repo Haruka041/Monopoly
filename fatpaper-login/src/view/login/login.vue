@@ -88,6 +88,11 @@ const handleRegister = async () => {
 			} finally {
 				isLoading.value = false;
 			}
+		} else {
+			FPMessage({
+				type: "error",
+				message: "密码加密失败，请刷新页面后重试",
+			});
 		}
 	} else {
 		FPMessage({

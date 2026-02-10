@@ -17,5 +17,13 @@ async function encryptWithPublicKey(password: string, publicKey: string) {
 export async function getEncryption(str: string) {
 	let publicKey = localStorage.getItem("public-key");
 	if (!publicKey) publicKey = await getPublicKey();
-	return encryptWithPublicKey(str, publicKey);
+
+	let encrypted = publicKey ? await encryptWithPublicKey(str, publicKey) : null;
+	if (!encrypted) {
+		// Space 重启后服务端密钥会变化，自动刷新公钥再重试一次
+		publicKey = await getPublicKey();
+		encrypted = publicKey ? await encryptWithPublicKey(str, publicKey) : null;
+	}
+
+	return encrypted;
 }

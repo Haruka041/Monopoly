@@ -71,7 +71,7 @@ export async function getImageMainColor(filename: string) {
 }
 
 //解密
-export function decryptPassword(enc: string): string {
+export function decryptPassword(enc: string): string | null {
 	const decrypt = new JSEncrypt();
 	decrypt.setPrivateKey(privateKey);
 	const decryptedPassword = decrypt.decrypt(enc);

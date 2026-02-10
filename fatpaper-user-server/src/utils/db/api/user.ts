@@ -14,6 +14,9 @@ export const createUser = async (
     const user = await AppDataSource.manager.findOneBy(User, {useraccount});
     if (user) throw new Error("已经存在的账号名")
     const decryptedPassword = decryptPassword(password);
+    if (!decryptedPassword) {
+        throw new Error("客户端密码解密失败，请刷新页面后重试");
+    }
     const {salt, passwordHash} = generatePasswordHash(decryptedPassword, getRandomString(16));
 
     const userToCreate = new User();
