@@ -25,8 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends nginx mariadb-s
 
 COPY --from=source /app /app
 
-RUN cd /app/fatpaper-user-server && npm install --legacy-peer-deps
-RUN cd /app/monopoly-server && npm install --legacy-peer-deps
+RUN cd /app/fatpaper-user-server && npm install --include=dev --legacy-peer-deps
+RUN cd /app/monopoly-server && npm install --include=dev --legacy-peer-deps
 
 RUN rm -rf /var/www/html && mkdir -p /var/www/monopoly-client /var/www/81 /var/www/82
 COPY --from=web-build /app/monopoly-client/dist /var/www/monopoly-client
