@@ -34,7 +34,21 @@
 - `TC_BUCKET_NAME`
 - `TC_REGION`
 
-## 4) Cloudflare Worker
+## 4) 数据持久化与自动备份（强烈建议）
+
+- 免费 `cpu-basic` 的容器磁盘会重置，数据库数据可能丢失。
+- 建议在 Space 开启 **Persistent Storage**（`/data` 路径）。
+- 已内置自动备份，默认开启；备份文件会写到 `/data/backups`（无持久盘时是临时目录）。
+
+可选 Variables：
+
+- `MYSQL_DATA_DIR`（默认：有 `/data` 时用 `/data/mysql`，否则 `/var/lib/mysql`）
+- `BACKUP_DIR`（默认：有 `/data` 时用 `/data/backups`，否则 `/var/backups/monopoly`）
+- `ENABLE_AUTO_BACKUP`（默认 `true`）
+- `BACKUP_INTERVAL_MIN`（默认 `60`）
+- `BACKUP_KEEP_COUNT`（默认 `24`）
+
+## 5) Cloudflare Worker
 
 参考根目录 `cloudflare-worker-example.js`，只需要改：
 
@@ -42,7 +56,7 @@
 
 然后把你的自定义域名（B）接到这个 Worker Route。
 
-## 5) 注意事项
+## 6) 注意事项
 
 - 这个项目多人联机依赖 `/ice-server`，Worker 必须支持 websocket 透传。
 - 若 `monopoly.sql` 中外链资源出现 403，请替换成你自己的资源地址。

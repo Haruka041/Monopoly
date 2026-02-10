@@ -15,6 +15,17 @@ export MYSQL_PORT="${MYSQL_PORT:-3306}"
 export MYSQL_USERNAME="${MYSQL_USERNAME:-root}"
 export MYSQL_PASSWORD="${MYSQL_PASSWORD:-root}"
 export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$MYSQL_PASSWORD}"
+export ENABLE_AUTO_BACKUP="${ENABLE_AUTO_BACKUP:-true}"
+export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-60}"
+export BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-24}"
+
+if [ -d /data ]; then
+    MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/data/mysql}"
+    BACKUP_DIR="${BACKUP_DIR:-/data/backups}"
+else
+    MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/var/lib/mysql}"
+    BACKUP_DIR="${BACKUP_DIR:-/var/backups/monopoly}"
+fi
 
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
 
@@ -24,6 +35,9 @@ cleanup() {
     pkill -f "node dist/monopoly-server/app.js" || true
     pkill -f "nginx: master process" || true
     pkill -f "mysqld" || true
+    if [ -n "${BACKUP_PID:-}" ]; then
+        kill "${BACKUP_PID}" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -38,7 +52,7 @@ wait_mysql() {
 }
 
 start_mysql() {
-    mysqld --user=mysql --datadir=/var/lib/mysql --socket="$MYSQL_SOCKET" --port="$MYSQL_PORT" --bind-address=127.0.0.1 &
+    mysqld --user=mysql --datadir="$MYSQL_DATA_DIR" --socket="$MYSQL_SOCKET" --port="$MYSQL_PORT" --bind-address=127.0.0.1 &
     MYSQL_PID=$!
     if ! wait_mysql; then
         echo "[space] mysql startup failed"
@@ -62,12 +76,45 @@ mysql_exec() {
     fi
 }
 
-echo "[space] starting mysql..."
-mkdir -p /run/mysqld /var/lib/mysql
-chown -R mysql:mysql /run/mysqld /var/lib/mysql
+backup_once() {
+    mkdir -p "$BACKUP_DIR"
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
 
-if [ ! -d /var/lib/mysql/mysql ]; then
-    mariadb-install-db --user=mysql --datadir=/var/lib/mysql --auth-root-authentication-method=normal > /tmp/mariadb-init.log
+    mysqldump -h127.0.0.1 -P"$MYSQL_PORT" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly \
+        | gzip -c > "${BACKUP_DIR}/monopoly_${ts}.sql.gz"
+    mysqldump -h127.0.0.1 -P"$MYSQL_PORT" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user \
+        | gzip -c > "${BACKUP_DIR}/fatpaper_user_${ts}.sql.gz"
+
+    local keep_from
+    keep_from=$((BACKUP_KEEP_COUNT + 1))
+    mapfile -t old_mono < <(ls -1t "${BACKUP_DIR}"/monopoly_*.sql.gz 2>/dev/null | tail -n +"${keep_from}" || true)
+    mapfile -t old_user < <(ls -1t "${BACKUP_DIR}"/fatpaper_user_*.sql.gz 2>/dev/null | tail -n +"${keep_from}" || true)
+    if [ "${#old_mono[@]}" -gt 0 ]; then rm -f "${old_mono[@]}"; fi
+    if [ "${#old_user[@]}" -gt 0 ]; then rm -f "${old_user[@]}"; fi
+}
+
+start_backup_loop() {
+    if [ "${ENABLE_AUTO_BACKUP}" != "true" ]; then
+        echo "[space] auto backup disabled"
+        return
+    fi
+    echo "[space] auto backup enabled: dir=${BACKUP_DIR}, interval=${BACKUP_INTERVAL_MIN}m, keep=${BACKUP_KEEP_COUNT}"
+    (
+        while true; do
+            sleep "${BACKUP_INTERVAL_MIN}m"
+            backup_once || echo "[space] backup failed"
+        done
+    ) &
+    BACKUP_PID=$!
+}
+
+echo "[space] starting mysql..."
+mkdir -p /run/mysqld "$MYSQL_DATA_DIR" "$BACKUP_DIR"
+chown -R mysql:mysql /run/mysqld "$MYSQL_DATA_DIR"
+
+if [ ! -d "${MYSQL_DATA_DIR}/mysql" ]; then
+    mariadb-install-db --user=mysql --datadir="$MYSQL_DATA_DIR" --auth-root-authentication-method=normal > /tmp/mariadb-init.log
 fi
 
 start_mysql
@@ -76,8 +123,8 @@ if ! mysql_socket -e "SELECT 1" >/dev/null 2>&1 && ! mysql_tcp -e "SELECT 1" >/d
     echo "[space] mysql root auth failed, reinitializing data dir..."
     kill "$MYSQL_PID" || true
     wait "$MYSQL_PID" || true
-    rm -rf /var/lib/mysql/*
-    mariadb-install-db --user=mysql --datadir=/var/lib/mysql --auth-root-authentication-method=normal > /tmp/mariadb-init.log
+    rm -rf "${MYSQL_DATA_DIR}"/*
+    mariadb-install-db --user=mysql --datadir="$MYSQL_DATA_DIR" --auth-root-authentication-method=normal > /tmp/mariadb-init.log
     start_mysql
 fi
 
@@ -101,6 +148,9 @@ if [ "${TABLE_COUNT:-0}" = "0" ]; then
     echo "[space] importing demo data monopoly.sql (first run)..."
     mysql -h127.0.0.1 -P"$MYSQL_PORT" -uroot "-p${MYSQL_ROOT_PASSWORD}" monopoly < /app/monopoly.sql
 fi
+
+backup_once || echo "[space] initial backup failed"
+start_backup_loop
 
 echo "[space] starting user-server..."
 (
