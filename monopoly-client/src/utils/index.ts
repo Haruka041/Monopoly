@@ -249,14 +249,47 @@ export function createLoginIframeOnBody(url: string): Promise<string> {
 	iframe.id = "login-iframe";
 	iframe.style.zIndex = "10000";
 	document.body.appendChild(iframe);
+
+	const isJwtToken = (token: unknown): token is string => {
+		if (typeof token !== "string") return false;
+		const parts = token.split(".");
+		if (parts.length !== 3) return false;
+		return parts.every((part) => /^[A-Za-z0-9\-_]+$/.test(part));
+	};
+
 	return new Promise((resolve, reject) => {
-		window.addEventListener("message", (e) => {
-			const token = e.data;
-			try {
-				document.body.removeChild(iframe);
-			} catch (e: any) {}
+		const expectedOrigin = new URL(url, window.location.href).origin;
+		const timeoutId = window.setTimeout(() => {
+			cleanup();
+			reject(new Error("登录超时，请重试"));
+		}, 120000);
+
+		const cleanup = () => {
+			window.clearTimeout(timeoutId);
+			window.removeEventListener("message", onMessage);
+			if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+		};
+
+		const onMessage = (e: MessageEvent) => {
+			// 只接受该登录 iframe 发出的消息，避免被其他 postMessage 污染。
+			if (e.source !== iframe.contentWindow) return;
+			if (e.origin !== expectedOrigin) return;
+
+			const payload = e.data;
+			const token =
+				typeof payload === "object" && payload
+					? (payload as { type?: string; token?: unknown }).type === "fatpaper-login-token"
+						? (payload as { token?: unknown }).token
+						: undefined
+					: payload;
+
+			if (!isJwtToken(token)) return;
+
+			cleanup();
 			resolve(token);
-		});
+		};
+
+		window.addEventListener("message", onMessage);
 	});
 }
 

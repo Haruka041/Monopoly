@@ -143,7 +143,8 @@ async function handleLogin() {
 	try {
 		const token = await apiLogin(loginForm.useraccount, loginForm.password);
 		if (token) {
-			window.top && window.top.postMessage(token, "*");
+			// Structured payload prevents parent window from misreading unrelated messages.
+			window.top && window.top.postMessage({ type: "fatpaper-login-token", token }, "*");
 		}
 	} finally {
 		isLoading.value = false;
