@@ -10,6 +10,7 @@ export USE_PORT="${USE_PORT:-false}"
 export USER_SERVER_PATH="${USER_SERVER_PATH:-user-server}"
 export MONOPOLY_SERVER_PATH="${MONOPOLY_SERVER_PATH:-monopoly-server}"
 export ICE_SERVER_PATH="${ICE_SERVER_PATH:-ice-server}"
+export USER_SERVER_HOST="${USER_SERVER_HOST:-127.0.0.1}"
 
 export MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 export MYSQL_PORT="${MYSQL_PORT:-3306}"

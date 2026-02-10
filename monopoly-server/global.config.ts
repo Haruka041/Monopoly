@@ -15,7 +15,7 @@ import {
 
 //容器内部通信所以不需要https
 export const __USERSERVERHOST__ = `http://${
-	process.env.USER_SERVER_HOST || (process.env.NODE_ENV == "production" ? "user-server" : "localhost")
+	process.env.USER_SERVER_HOST || "127.0.0.1"
 }:${USER_SERVER_PORT}`;
 
 export const __MONOPOLYSERVERHOST__ = USE_PORT
