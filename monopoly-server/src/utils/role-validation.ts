@@ -12,17 +12,11 @@ const AllowPath = {
 		"/user/get-code-state",
 		"/user/get-login-code",
 		"/static/(.*)",
-		"/music/list",
-		"/role/list",
-		"/map/list",
-		"/map/info",
-		"/room-router/join",
-		"/room-router/emit-host",
-		"/room-router/delete",
-		"/room-router/heart",
-		"/room-router/random-public-room",
-		"/room-router/set-private",
-		"/room-router/set-started"
+		// Public game APIs should not require token in Space/public deployment.
+		"/music/(.*)",
+		"/role/(.*)",
+		"/map/(.*)",
+		"/room-router/(.*)",
 	],
 };
 
