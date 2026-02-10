@@ -1,0 +1,16 @@
+FROM node:16-alpine
+RUN npm config set registry https://registry.npmmirror.com/
+
+WORKDIR .
+COPY ./tencent-cloud.ts .
+COPY ./global.config.ts .
+
+WORKDIR /fatpaper-user-server
+COPY ./user-server-health-check.js .
+COPY ./fatpaper-user-server .
+RUN npm install
+
+HEALTHCHECK --interval=5s --timeout=5s  --retries=10 CMD node user-server-health-check.js
+
+EXPOSE 83
+CMD ["yarn", "start"]

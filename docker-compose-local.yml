@@ -1,0 +1,76 @@
+version: '0.0.1'
+services:
+  web:
+    container_name: 'web'
+    image: 'fatpaper/fatpaper-web'
+    build:
+      context: ./
+      dockerfile: dockerfile-web
+    ports:
+      - "80:80"
+      - "81:81"
+      - "82:82"
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+  user-server:
+    container_name: 'user-server'
+    image: 'fatpaper/fatpaper-user-server'
+    build:
+      context: ./
+      dockerfile: dockerfile-user-server
+    ports:
+      - "83:83"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+  monopoly-server:
+    container_name: 'monopoly-server'
+    image: 'fatpaper/fatpaper-monopoly-server'
+    build:
+      context: ./
+      dockerfile: dockerfile-monopoly-server
+    ports:
+      - "84:84"
+      - "85:85"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      user-server:
+        condition: service_healthy
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+  mysql:
+    image: 'mysql:8.3.0'
+    container_name: 'mysql'
+    command:
+      - --default_authentication_plugin=mysql_native_password
+    volumes:
+      - ./conf/sql/:/docker-entrypoint-initdb.d/
+      - ./conf/my.cnf:/etc/my.cnf
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - TZ=Asia/Shanghai
+    ports:
+      - "3306:3306"
+    restart: always
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]
+      retries: 10

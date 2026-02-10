@@ -1,0 +1,49 @@
+# Hugging Face Space 一键部署指南
+
+这份仓库已经改成 `Docker Space` 可直接启动。你只需要：
+
+1. 创建一个 Hugging Face Space（SDK 选 `Docker`）
+2. 把本仓库代码推送到该 Space
+3. 在 Space 的 `Settings -> Variables and secrets` 填变量
+4. 配置 Cloudflare Worker 反代到 `*.hf.space`
+
+## 1) 必填 Variables
+
+- `FATPAPER_DOMAIN` = 你的 Cloudflare 域名（例如 `game.example.com`，不带 `https://`）
+- `PROTOCOL` = `https`
+- `USE_PORT` = `false`
+- `USER_SERVER_PATH` = `user-server`
+- `MONOPOLY_SERVER_PATH` = `monopoly-server`
+- `ICE_SERVER_PATH` = `ice-server`
+
+- `MYSQL_HOST` = `127.0.0.1`
+- `MYSQL_PORT` = `3306`
+- `MYSQL_USERNAME` = `root`
+
+## 2) 必填 Secrets
+
+- `MYSQL_PASSWORD` = 你的数据库密码
+- `MYSQL_ROOT_PASSWORD` = 同上（建议与 `MYSQL_PASSWORD` 一致）
+
+## 3) 可选 Secrets（腾讯云 COS）
+
+不填就走本地存储（容器内）。
+
+- `TC_SECRETID`
+- `TC_SECRETKEY`
+- `TC_BUCKET_NAME`
+- `TC_REGION`
+
+## 4) Cloudflare Worker
+
+参考根目录 `cloudflare-worker-example.js`，只需要改：
+
+- `targetHostname` 改成你的 Space 原始域名（例如 `xxx.hf.space`）
+
+然后把你的自定义域名（B）接到这个 Worker Route。
+
+## 5) 注意事项
+
+- 这个项目多人联机依赖 `/ice-server`，Worker 必须支持 websocket 透传。
+- 若 `monopoly.sql` 中外链资源出现 403，请替换成你自己的资源地址。
+- Space 空闲可能休眠，首次进入会冷启动。
