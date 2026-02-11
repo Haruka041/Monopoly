@@ -41,7 +41,7 @@ export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
 export BACKUP_HF_TOKEN="${BACKUP_HF_TOKEN:-${HF_TOKEN:-}}"
-export BACKUP_HF_USERNAME="${BACKUP_HF_USERNAME:-${HF_USERNAME:-token}}"
+export BACKUP_HF_USERNAME="${BACKUP_HF_USERNAME:-${HF_USERNAME:-__token__}}"
 
 if [ -d /data ]; then
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/data/mysql}"
@@ -59,6 +59,7 @@ BACKUP_WORK_DIR="${BACKUP_WORK_DIR:-/tmp/monopoly-backup-work}"
 BACKUP_RESTORE_DIR="${BACKUP_RESTORE_DIR:-/tmp/monopoly-backup-restore}"
 BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
 BACKUP_EVENT_FILE="${BACKUP_EVENT_FILE:-/tmp/monopoly-backup-event.log}"
+BACKUP_GIT_ASKPASS="${BACKUP_GIT_ASKPASS:-/tmp/monopoly-hf-git-askpass.sh}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
 BACKUP_LAST_RUN_FILE="${BACKUP_LAST_RUN_FILE:-/tmp/monopoly-backup-last-run}"
@@ -212,6 +213,46 @@ is_repo_backup_enabled() {
     return 0
 }
 
+mask_backup_secret() {
+    local text="${1:-}"
+    local masked="${text}"
+    if [ -n "${BACKUP_HF_TOKEN:-}" ]; then
+        masked="${masked//${BACKUP_HF_TOKEN}/***HF_TOKEN***}"
+    fi
+    printf '%s' "${masked}"
+}
+
+prepare_backup_git_auth() {
+    local hf_user="${BACKUP_HF_USERNAME:-__token__}"
+    cat > "${BACKUP_GIT_ASKPASS}" <<EOF
+#!/usr/bin/env sh
+case "\$1" in
+*sername*) printf '%s\n' "${hf_user}" ;;
+*assword*) printf '%s\n' "${BACKUP_HF_TOKEN}" ;;
+*) printf '\n' ;;
+esac
+EOF
+    chmod 700 "${BACKUP_GIT_ASKPASS}" >/dev/null 2>&1 || true
+}
+
+run_git_hf() {
+    local output=""
+    local rc=0
+    set +e
+    output="$(
+        GIT_TERMINAL_PROMPT=0 \
+        GIT_ASKPASS="${BACKUP_GIT_ASKPASS}" \
+        git "$@" 2>&1
+    )"
+    rc=$?
+    set -e
+    if [ "${rc}" -ne 0 ]; then
+        append_app_log "[space] git auth command failed: git $* :: $(mask_backup_secret "${output}")"
+        return "${rc}"
+    fi
+    return 0
+}
+
 build_backup_remote_url() {
     local repo_url
     if [[ "${BACKUP_REPO}" =~ ^https?:// ]]; then
@@ -232,7 +273,7 @@ build_backup_remote_url() {
                 ;;
         esac
     fi
-    echo "${repo_url/https:\/\//https://${BACKUP_HF_USERNAME}:${BACKUP_HF_TOKEN}@}"
+    echo "${repo_url}"
 }
 
 ensure_backup_repo() {
@@ -242,11 +283,17 @@ ensure_backup_repo() {
 
     local remote_url
     remote_url="$(build_backup_remote_url)"
+    prepare_backup_git_auth
+
+    if ! run_git_hf ls-remote "${remote_url}"; then
+        append_app_log "[space] backup repo auth check failed: repo=${BACKUP_REPO}, type=${BACKUP_REPO_TYPE}, branch=${BACKUP_BRANCH}"
+        return 1
+    fi
 
     if [ ! -d "${BACKUP_REPO_DIR}/.git" ]; then
         rm -rf "${BACKUP_REPO_DIR}"
-        if ! git clone --depth 1 --branch "${BACKUP_BRANCH}" "${remote_url}" "${BACKUP_REPO_DIR}" >/dev/null 2>&1; then
-            if ! git clone "${remote_url}" "${BACKUP_REPO_DIR}" >/dev/null 2>&1; then
+        if ! run_git_hf clone --depth 1 --branch "${BACKUP_BRANCH}" "${remote_url}" "${BACKUP_REPO_DIR}"; then
+            if ! run_git_hf clone "${remote_url}" "${BACKUP_REPO_DIR}"; then
                 echo "[space] backup repo clone failed"
                 return 1
             fi
@@ -254,9 +301,9 @@ ensure_backup_repo() {
         fi
     else
         git -C "${BACKUP_REPO_DIR}" remote set-url origin "${remote_url}" >/dev/null 2>&1 || true
-        git -C "${BACKUP_REPO_DIR}" fetch origin "${BACKUP_BRANCH}" >/dev/null 2>&1 || true
+        run_git_hf -C "${BACKUP_REPO_DIR}" fetch origin "${BACKUP_BRANCH}" || true
         git -C "${BACKUP_REPO_DIR}" checkout "${BACKUP_BRANCH}" >/dev/null 2>&1 || git -C "${BACKUP_REPO_DIR}" checkout -b "${BACKUP_BRANCH}" >/dev/null 2>&1 || true
-        git -C "${BACKUP_REPO_DIR}" pull --rebase origin "${BACKUP_BRANCH}" >/dev/null 2>&1 || true
+        run_git_hf -C "${BACKUP_REPO_DIR}" pull --rebase origin "${BACKUP_BRANCH}" || true
     fi
 
     git -C "${BACKUP_REPO_DIR}" config user.email "space-backup@local" >/dev/null 2>&1 || true
@@ -304,7 +351,7 @@ sync_backups_to_repo() {
         return 0
     fi
     git -C "${BACKUP_REPO_DIR}" commit -m "Automated backup ${ts} (${reason})" >/dev/null 2>&1 || true
-    git -C "${BACKUP_REPO_DIR}" push origin "${BACKUP_BRANCH}" >/dev/null 2>&1 || {
+    run_git_hf -C "${BACKUP_REPO_DIR}" push origin "${BACKUP_BRANCH}" || {
         append_app_log "[space] backup repo push failed (${reason}): please verify BACKUP_REPO and HF token write permission"
         return 1
     }
