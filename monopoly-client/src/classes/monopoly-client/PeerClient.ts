@@ -56,13 +56,21 @@ export class PeerClient {
 							},
 					  }
 			);
+			const timeout = window.setTimeout(() => {
+				peer.destroy();
+				reject(new Error("连接房间服务超时，请稍后再试"));
+			}, 12000);
+
 			peer.addListener("open", (id) => {
+				window.clearTimeout(timeout);
 				console.log("ice服务器连接成功, ID:", id);
 				peer.removeAllListeners();
 				resolve(peer);
 			});
 			peer.addListener("error", (e) => {
-				reject(e);
+				window.clearTimeout(timeout);
+				peer.destroy();
+				reject(new Error(e?.message || "连接房间服务失败"));
 			});
 		});
 		return new PeerClient(peer);

@@ -199,7 +199,7 @@ export class MonopolyHost {
 	}
 
 	public static async create(roomId: string, host: string, port: number, heartContinuationTimeMs: number) {
-		const peer = await new Promise<Peer>((resolve) => {
+		const peer = await new Promise<Peer>((resolve, reject) => {
 			const isHTTP = __PROTOCOL__ === "http";
 			const peer = new Peer(
 				isHTTP
@@ -213,9 +213,20 @@ export class MonopolyHost {
 							},
 					  }
 			);
+			const timeout = window.setTimeout(() => {
+				peer.destroy();
+				reject(new Error("连接房主节点超时，请稍后重试"));
+			}, 12000);
+
 			peer.on("open", () => {
+				window.clearTimeout(timeout);
 				console.info("MonopolyHost开启成功");
 				resolve(peer);
+			});
+			peer.on("error", (err: PeerError) => {
+				window.clearTimeout(timeout);
+				peer.destroy();
+				reject(new Error(err?.message || "房主节点连接失败"));
 			});
 		});
 		const { roleList } = await getRoleList();
