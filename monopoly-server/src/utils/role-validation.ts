@@ -11,16 +11,31 @@ const AllowPath = {
 		"/user/login",
 		"/user/get-code-state",
 		"/user/get-login-code",
-		"/static/(.*)",
-		// Public game APIs should not require token in Space/public deployment.
-		"/music/(.*)",
-		"/role/(.*)",
-		"/map/(.*)",
-		"/room-router/(.*)",
+		"/static",
+		"/music",
+		"/role",
+		"/map",
+		"/room-router",
 	],
 };
 
 function isIgnore(path: string): boolean {
+	// Prefix matching is more robust than path-to-regexp patterns for Express subroutes.
+	if (
+		path === "/static" ||
+		path.startsWith("/static/") ||
+		path === "/music" ||
+		path.startsWith("/music/") ||
+		path === "/role" ||
+		path.startsWith("/role/") ||
+		path === "/map" ||
+		path.startsWith("/map/") ||
+		path === "/room-router" ||
+		path.startsWith("/room-router/")
+	) {
+		return true;
+	}
+
 	return AllowPath.Ignore.some((allowPath) => {
 		const pathMatcher = match(allowPath);
 		return Boolean(pathMatcher(path));

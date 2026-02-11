@@ -158,7 +158,7 @@ routerUser.post("/login", async (req, res) => {
 	if (useraccount && password) {
 		try {
 			const user = await userLogin(useraccount, password, privateKey);
-			const tokenExpireTimeMs = 60 * 1000;
+			const tokenExpireTimeMs = Math.max(Number(process.env.USER_TOKEN_EXPIRE_MS || 7 * 24 * 60 * 60 * 1000), 60000);
 			const token = await setToken(user.id, user.isAdmin, tokenExpireTimeMs);
 			// setRedis(user.id, token, tokenExpireTimeMs);
 

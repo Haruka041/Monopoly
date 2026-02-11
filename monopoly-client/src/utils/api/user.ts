@@ -11,6 +11,10 @@ interface UserInfo {
 2;
 
 export async function getUserByToken(token: string) {
-	const res = await axios.get(`${__USERSERVER__}/user/info`, { data: { token } });
+	const authToken = token || localStorage.getItem("token") || "";
+	const res = await axios.get(`${__USERSERVER__}/user/info`, {
+		params: { token: authToken },
+		headers: authToken ? { Authorization: authToken } : {},
+	});
 	return res.data as UserInfo;
 }
