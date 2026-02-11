@@ -46,6 +46,9 @@ export class MonopolyClient {
 	private socketPath = `${__MONOPOLYSERVER__}/ws/game`;
 	private socket: WebSocket | null = null;
 	private manualClose = false;
+	private reconnecting = false;
+	private readonly reconnectMaxAttempts = 8;
+	private readonly reconnectBaseDelayMs = 1200;
 
 	private isOnline = false;
 
@@ -143,18 +146,35 @@ export class MonopolyClient {
 			this.roomId = roomId;
 			this.socketPath = data.wsPath || `${__MONOPOLYSERVER__}/ws/game`;
 			useLoading().showLoading("连接房间服务器中...");
-			await this.linkToGameServer(roomId);
+			await this.linkToGameServer(roomId, { isReconnect: false });
 		} catch (e) {
 			FPMessage({ type: "error", message: this.getErrorMessage(e, "服务器连接失败") });
 		}
 	}
 
-	private async linkToGameServer(roomId: string) {
-		try {
-			const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-			const wsPath = this.socketPath.startsWith("/") ? this.socketPath : `/${this.socketPath}`;
-			const wsUrl = `${wsProtocol}://${window.location.host}${wsPath}?roomId=${encodeURIComponent(roomId)}`;
+	private buildWsUrl(roomId: string) {
+		const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+		const wsPath = this.socketPath.startsWith("/") ? this.socketPath : `/${this.socketPath}`;
+		return `${wsProtocol}://${window.location.host}${wsPath}?roomId=${encodeURIComponent(roomId)}`;
+	}
 
+	private resetHeartBeatTimer() {
+		this.intervalList.forEach((i) => {
+			clearInterval(i);
+		});
+		this.intervalList = [];
+		this.intervalList.push(
+			setInterval(() => {
+				this.sendHeartTime = Date.now();
+				this.sendMsg(SocketMsgType.Heart, "");
+			}, 3000)
+		);
+	}
+
+	private async linkToGameServer(roomId: string, options?: { isReconnect?: boolean; silentError?: boolean }) {
+		const isReconnect = Boolean(options?.isReconnect);
+		try {
+			const wsUrl = this.buildWsUrl(roomId);
 			const socket = await this.openSocketWithRetry(wsUrl);
 
 			this.socket = socket;
@@ -168,23 +188,19 @@ export class MonopolyClient {
 				data: user,
 			});
 
-			FPMessage({
-				type: "success",
-				message: "房间连接成功🤗",
-			});
+			if (isReconnect) {
+				FPMessage({ type: "success", message: "重连成功，已回到房间" });
+			} else {
+				FPMessage({
+					type: "success",
+					message: "房间连接成功🤗",
+				});
+			}
 			this.isOnline = true;
+			this.reconnecting = false;
+			useLoading().hideLoading();
 
-			this.intervalList.forEach((i) => {
-				clearInterval(i);
-			});
-			this.intervalList = [];
-
-			this.intervalList.push(
-				setInterval(() => {
-					this.sendHeartTime = Date.now();
-					this.sendMsg(SocketMsgType.Heart, "");
-				}, 3000)
-			);
+			this.resetHeartBeatTimer();
 
 			socket.onmessage = (ev: MessageEvent<string>) => {
 				const data: SocketMessage = JSON.parse(ev.data);
@@ -287,35 +303,67 @@ export class MonopolyClient {
 			};
 
 			socket.onclose = () => {
-				if (this.isOnline && !this.manualClose) {
-					this.isOnline = false;
-					FPMessage({
-						type: "error",
-						message: "与房间服务器断开连接，即将返回房间列表",
-						onClosed: () => {
-							router.replace("room-router");
-							this.destory();
-						},
-					});
-				}
+				this.handleSocketDisconnected("close");
 			};
 
 			socket.onerror = () => {
-				if (this.isOnline && !this.manualClose) {
-					this.isOnline = false;
-					FPMessage({
-						type: "error",
-						message: "与房间服务器断开连接，即将返回房间列表",
-						onClosed: () => {
-							router.replace("room-router");
-							this.destory();
-						},
-					});
-				}
+				this.handleSocketDisconnected("error");
 			};
 		} catch (e: any) {
-			FPMessage({ type: "error", message: this.getErrorMessage(e, "连接房间失败") });
+			if (!options?.silentError) {
+				FPMessage({ type: "error", message: this.getErrorMessage(e, "连接房间失败") });
+			}
+			throw e;
 		}
+	}
+
+	private async reconnectToRoom() {
+		if (this.reconnecting || this.manualClose) return;
+		if (!this.roomId) {
+			FPMessage({
+				type: "error",
+				message: "连接已断开，找不到房间信息，已返回大厅",
+				onClosed: () => {
+					router.replace("room-router");
+					this.destory();
+				},
+			});
+			return;
+		}
+
+		this.reconnecting = true;
+		useLoading().showLoading("网络抖动，正在重连...");
+		for (let attempt = 1; attempt <= this.reconnectMaxAttempts; attempt++) {
+			useLoading().text = `网络中断，正在重连 (${attempt}/${this.reconnectMaxAttempts})...`;
+			try {
+				await this.linkToGameServer(this.roomId, {
+					isReconnect: true,
+					silentError: true,
+				});
+				return;
+			} catch {
+				if (attempt < this.reconnectMaxAttempts) {
+					await this.sleep(this.reconnectBaseDelayMs * attempt);
+				}
+			}
+		}
+		useLoading().hideLoading();
+		this.reconnecting = false;
+		FPMessage({
+			type: "error",
+			message: "重连失败，请重新进入房间",
+			onClosed: () => {
+				router.replace("room-router");
+				this.destory();
+			},
+		});
+	}
+
+	private handleSocketDisconnected(_reason: string) {
+		if (this.manualClose) return;
+		if (!this.isOnline && this.reconnecting) return;
+		this.isOnline = false;
+		void this.reconnectToRoom();
 	}
 
 	private handleHeart(data: SocketMessage) {
@@ -327,14 +375,7 @@ export class MonopolyClient {
 
 	private handleNoHeart = debounce(
 		() => {
-			FPMessage({
-				type: "error",
-				message: "与房间服务器断开连接，即将返回房间列表",
-				onClosed: () => {
-					router.replace("room-router");
-					this.destory();
-				},
-			});
+			this.handleSocketDisconnected("heart-timeout");
 		},
 		20000,
 		true
@@ -355,6 +396,7 @@ export class MonopolyClient {
 	private handleJoinRoomReply(data: SocketMessage) {
 		if (data.roomId) {
 			useRoomInfo().roomId = data.roomId;
+			localStorage.setItem("last-room-id", data.roomId);
 			router.replace({ name: "room" });
 		}
 	}

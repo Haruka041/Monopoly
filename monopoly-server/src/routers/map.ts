@@ -11,6 +11,7 @@ import {
 	updateHouseModelList,
 	updateMapName,
 	updateMapUseState,
+	cloneMapWithVariant,
 } from "../db/api/map";
 import { getMapItemListByMapId } from "../db/api/mapItem";
 import { getStreetListByMapId } from "../db/api/street";
@@ -352,5 +353,50 @@ routerMap.post("/update-inuse", async (req, res, next) => {
 		};
 		res.status(resMsg.status).json(resMsg);
 		return;
+	}
+});
+
+routerMap.post("/clone", async (req, res, next) => {
+	const {
+		sourceMapId,
+		newName,
+		propertyCostScale = 1,
+		tollScale = 1,
+		streetScale = 1,
+	} = req.body as {
+		sourceMapId?: string;
+		newName?: string;
+		propertyCostScale?: number;
+		tollScale?: number;
+		streetScale?: number;
+	};
+
+	if (!sourceMapId || !newName) {
+		const resMsg: ResInterface = {
+			status: 400,
+			msg: "参数错误: 缺少 sourceMapId 或 newName",
+		};
+		res.status(resMsg.status).json(resMsg);
+		return;
+	}
+
+	try {
+		const map = await cloneMapWithVariant(sourceMapId, newName, {
+			propertyCostScale,
+			tollScale,
+			streetScale,
+		});
+		const resMsg: ResInterface = {
+			status: 200,
+			msg: "地图复制成功",
+			data: map,
+		};
+		res.status(resMsg.status).json(resMsg);
+	} catch (e: any) {
+		const resMsg: ResInterface = {
+			status: 500,
+			msg: e?.message || "地图复制失败",
+		};
+		res.status(resMsg.status).json(resMsg);
 	}
 });

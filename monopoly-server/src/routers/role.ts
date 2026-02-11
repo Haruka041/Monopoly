@@ -1,6 +1,6 @@
 import {Router} from "express";
 import {ResInterface} from "../interfaces/res";
-import {createRole, deleteRole, getRoleList, updateRole} from "../db/api/role";
+import {createRole, deleteRole, generateRoleVariants, getRoleList, updateRole} from "../db/api/role";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
@@ -29,6 +29,23 @@ routerRole.get("/list", async (req, res, next) => {
         };
         res.status(resMsg.status).json(resMsg);
     }
+});
+
+routerRole.post("/generate-variants", async (req, res) => {
+	const { count = 3 } = req.body as { count?: number };
+	try {
+		const created = await generateRoleVariants(count);
+		res.status(200).json(<ResInterface>{
+			status: 200,
+			msg: `已生成 ${created.length} 个角色变体`,
+			data: created,
+		});
+	} catch (e: any) {
+		res.status(400).json(<ResInterface>{
+			status: 400,
+			msg: e?.message || "生成角色失败",
+		});
+	}
 });
 
 

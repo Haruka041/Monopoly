@@ -1,5 +1,14 @@
 import { Router } from "express";
-import { createUser, deleteUser, getUserById, getUserList, isAdmin, userLogin } from "../utils/db/api/user";
+import {
+	changeUserPasswordById,
+	createUser,
+	deleteUser,
+	getUserById,
+	getUserList,
+	isAdmin,
+	updateUserProfileById,
+	userLogin,
+} from "../utils/db/api/user";
 import { setToken, verToken } from "../utils/token";
 import { ResInterface } from "../interfaces/res";
 import multer from "multer";
@@ -12,6 +21,18 @@ import { deleteFiles, uploadFile } from "../utils/file-uploader";
 
 const avatarMulter = multer({ dest: "public/avatars" });
 const routerUser = Router();
+
+function getAuthUserId(req: any) {
+	const token = req.body?.token || req.header("authorization") || req.query?.token;
+	if (!token) {
+		throw new Error("身份验证失败：没有附带token");
+	}
+	const tokenInfo = verToken(token) as { userId?: string } | null;
+	if (!tokenInfo?.userId) {
+		throw new Error("Token过期或失效，请重新登录");
+	}
+	return tokenInfo.userId;
+}
 
 routerUser.get("/list", async (req, res, next) => {
 	const { page = 1, size = 8 } = req.query;
@@ -245,6 +266,64 @@ routerUser.post("/register", avatarMulter.single("avatar"), async (req, res) => 
 			msg: "请求参数错误",
 		};
 		res.status(400).json(resContent);
+	}
+});
+
+routerUser.post("/profile/update", avatarMulter.single("avatar"), async (req, res) => {
+	try {
+		const userId = getAuthUserId(req);
+		const { username, color } = req.body as { username?: string; color?: string };
+
+		let avatarUrl: string | undefined;
+		if (req.file?.originalname) {
+			const fileType = path.parse(req.file.originalname).ext.toLowerCase();
+			if (![".png", ".jpg", ".jpeg"].includes(fileType)) {
+				try {
+					fs.unlinkSync(req.file.path);
+				} catch {}
+				res.status(400).json(<ResInterface>{ status: 400, msg: "头像文件后缀名不合法" });
+				return;
+			}
+			const avatarFilePath = req.file.path + fileType;
+			fs.renameSync(req.file.path, avatarFilePath);
+			const avatarFileName = req.file.filename + fileType;
+			avatarUrl = await uploadFile({
+				filePath: avatarFilePath,
+				name: avatarFileName,
+				targetPath: `fatpaper/user/avatar/`,
+			});
+		}
+
+		const data = await updateUserProfileById(userId, {
+			username,
+			color,
+			avatar: avatarUrl,
+		});
+		res.status(200).json(<ResInterface>{ status: 200, msg: "资料更新成功", data });
+	} catch (e: any) {
+		res.status(400).json(<ResInterface>{ status: 400, msg: e?.message || "资料更新失败" });
+	}
+});
+
+routerUser.post("/profile/change-password", async (req, res) => {
+	try {
+		const userId = getAuthUserId(req);
+		const { oldPassword, newPassword } = req.body as { oldPassword?: string; newPassword?: string };
+		if (!oldPassword || !newPassword) {
+			res.status(400).json(<ResInterface>{ status: 400, msg: "参数错误" });
+			return;
+		}
+		await changeUserPasswordById(userId, oldPassword, newPassword);
+		res.status(200).json(<ResInterface>{ status: 200, msg: "密码修改成功" });
+	} catch (e: any) {
+		const needKeyRefresh = typeof e?.message === "string" && e.message.includes("客户端密码解密失败");
+		res.status(400).json(
+			<ResInterface>{
+				status: 400,
+				msg: e?.message || "密码修改失败",
+				data: needKeyRefresh ? { publicKey } : undefined,
+			}
+		);
 	}
 });
 

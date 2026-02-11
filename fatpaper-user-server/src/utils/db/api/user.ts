@@ -83,3 +83,70 @@ export const getUserList = async (page: number, size: number) => {
 export const isAdmin = async (openId: string) => {
     return openId === "o9eqR63E6wFQRAqUUcHs424HCNw4";
 };
+
+export const updateUserProfileById = async (
+	userId: string,
+	payload: {
+		username?: string;
+		avatar?: string;
+		color?: string;
+	}
+) => {
+	const user = await userRepository.findOne({
+		where: { id: userId },
+	});
+	if (!user) {
+		throw new Error("用户不存在");
+	}
+	if (payload.username !== undefined) {
+		const username = payload.username.trim();
+		if (!username) {
+			throw new Error("用户名不能为空");
+		}
+		user.username = username;
+	}
+	if (payload.color !== undefined) {
+		const color = payload.color.trim();
+		if (!color) {
+			throw new Error("颜色不能为空");
+		}
+		user.color = color;
+	}
+	if (payload.avatar !== undefined) {
+		user.avatar = payload.avatar;
+	}
+	await userRepository.save(user);
+	return {
+		id: user.id,
+		useraccount: user.useraccount,
+		username: user.username,
+		avatar: user.avatar,
+		color: user.color,
+	};
+};
+
+export const changeUserPasswordById = async (userId: string, oldPassword: string, newPassword: string) => {
+	const user = await userRepository.findOne({
+		where: { id: userId },
+		select: ["id", "password", "salt"],
+	});
+	if (!user) {
+		throw new Error("用户不存在");
+	}
+	const oldPlain = decryptPassword(oldPassword) || oldPassword;
+	const newPlain = decryptPassword(newPassword) || newPassword;
+	if (newPlain.length < 6) {
+		throw new Error("新密码长度至少为6位");
+	}
+
+	const oldHash = generatePasswordHash(oldPlain, user.salt).passwordHash;
+	if (oldHash !== user.password) {
+		throw new Error("旧密码错误");
+	}
+
+	const { salt, passwordHash } = generatePasswordHash(newPlain, getRandomString(16));
+	user.salt = salt;
+	user.password = passwordHash;
+	await userRepository.save(user);
+	return true;
+};

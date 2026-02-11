@@ -99,6 +99,15 @@ export class GameProcess {
 		const player = this.getPlayerById(userId);
 		if (player) {
 			player.setIsOffline(true);
+			// If the disconnected player is on turn, enqueue safe default operations
+			// so the round can continue in server-hosted mode.
+			if (this.currentPlayerInRound?.getId() === userId) {
+				setTimeout(() => {
+					this.operateListener.emit(userId, OperateType.RollDice);
+					this.operateListener.emit(userId, OperateType.BuyProperty, false);
+					this.operateListener.emit(userId, OperateType.BuildHouse, false);
+				}, 120);
+			}
 			this.gameInfoBroadcast();
 		}
 	}
@@ -486,6 +495,13 @@ export class GameProcess {
 
 	private async useChanceCardListener(sourcePlayer: Player) {
 		const userId = sourcePlayer.getId();
+		if (sourcePlayer.getIsOffline()) {
+			// Offline mode: skip active card operation and roll directly.
+			this.eventMsg = `${sourcePlayer.getName()} 离线托管中`;
+			this.roundRemainingTimeBroadcast(0);
+			await this.sleep(200);
+			return;
+		}
 		await new Promise<void>(async (resolve) => {
 			let isRoundEnd = false;
 
@@ -634,6 +650,33 @@ export class GameProcess {
 
 	private async waitRollDice(player: Player) {
 		const userId = player.getId();
+		if (player.getIsOffline()) {
+			await this.sleep(400);
+			this.gameBroadcast({ type: SocketMsgType.RollDiceStart, source: "server", data: "" });
+			this.dice.roll();
+			await this.sleep(1200);
+			this.gameBroadcast({
+				type: SocketMsgType.RollDiceResult,
+				source: "server",
+				data: {
+					rollDiceResult: this.dice.getResultArray(),
+					rollDiceCount: this.dice.getResultNumber(),
+					rollDicePlayerId: player.getId(),
+				},
+				msg: {
+					type: "info",
+					content: `${player.getName()}(托管) 摇到的点数是: ${this.dice.getResultArray().join("-")}`,
+				},
+			});
+			this.gameLogBroadcast(
+				`${this.createGameLinkItem(GameLinkItem.Player, player.getId())}(托管) 摇到的点数是: ${this.dice
+					.getResultArray()
+					.join("-")}`
+			);
+			await player.walk(this.dice.getResultNumber());
+			this.gameInfoBroadcast();
+			return;
+		}
 		await new Promise((resolve, reject) => {
 			this.operateListener.onceAsync(userId, OperateType.RollDice, resolve);
 			player.addEventListener(PlayerEvents.AfterSetBankrupted, (isBankrupted) => {
@@ -688,12 +731,19 @@ export class GameProcess {
 			};
 
 			const owner = property.getOwner();
-			if (owner) {
-				if (owner.getId() === arrivedPlayer.getId()) {
-					if (property.getBuildingLevel() < 2) {
-						this.eventMsg = `等待 ${arrivedPlayer.getName()} 升级房子`;
-						this.roundTimeTimer.setTimeOutFunction(() => {
-							this.operateListener.emit(arrivedPlayer.getId(), OperateType.BuildHouse, false);
+				if (owner) {
+					if (owner.getId() === arrivedPlayer.getId()) {
+						if (property.getBuildingLevel() < 2) {
+							if (arrivedPlayer.getIsOffline()) {
+								if (arrivedPlayer.getMoney() > property.getSellCost()) {
+									await this.handlePlayerBuildUp(arrivedPlayer, property);
+								}
+								this.roundRemainingTimeBroadcast(0);
+								return;
+							}
+							this.eventMsg = `等待 ${arrivedPlayer.getName()} 升级房子`;
+							this.roundTimeTimer.setTimeOutFunction(() => {
+								this.operateListener.emit(arrivedPlayer.getId(), OperateType.BuildHouse, false);
 						});
 						arrivePropertyMsg.type = SocketMsgType.BuildHouse;
 						arrivePropertyMsg.msg = {
@@ -754,6 +804,13 @@ export class GameProcess {
 					);
 				}
 			} else {
+				if (arrivedPlayer.getIsOffline()) {
+					if (arrivedPlayer.getMoney() > property.getSellCost()) {
+						await this.handlePlayerBuyProperty(arrivedPlayer, property);
+					}
+					this.roundRemainingTimeBroadcast(0);
+					return;
+				}
 				this.eventMsg = `等待 ${arrivedPlayer.getName()} 购买地皮`;
 				this.roundTimeTimer.setTimeOutFunction(() => {
 					this.operateListener.emit(arrivedPlayer.getId(), OperateType.BuyProperty, false);
