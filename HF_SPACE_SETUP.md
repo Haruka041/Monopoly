@@ -49,6 +49,7 @@
 - `BACKUP_DIR`（默认：有 `/data` 时用 `/data/backups`，否则 `/var/backups/monopoly`）
 - `ENABLE_AUTO_BACKUP`（默认 `true`）
 - `BACKUP_ARCHIVE_NAME`（默认 `data_backup.zip`）
+- `RESTORE_BACKUP_ON_STARTUP`（默认 `true`，每次启动都优先尝试恢复备份）
 - `BACKUP_TRIGGER_LINES`（默认 `100`）
 - `BACKUP_INTERVAL_MIN`（默认 `1`，可选；>0 时按分钟额外定时备份）
 - `BACKUP_MIN_INTERVAL_SEC`（默认 `60`；日志触发与定时触发的最小备份间隔）

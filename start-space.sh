@@ -36,6 +36,7 @@ export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
 export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-60}"
 export BACKUP_HEARTBEAT_INTERVAL_SEC="${BACKUP_HEARTBEAT_INTERVAL_SEC:-60}"
 export BACKUP_ARCHIVE_NAME="${BACKUP_ARCHIVE_NAME:-data_backup.zip}"
+export RESTORE_BACKUP_ON_STARTUP="${RESTORE_BACKUP_ON_STARTUP:-true}"
 export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
@@ -641,17 +642,26 @@ else
     append_app_log "[space] backup repo disabled: missing BACKUP_REPO or HF token"
 fi
 
-TABLE_COUNT="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='monopoly' AND table_name='map';")"
-if [ "${TABLE_COUNT:-0}" = "0" ]; then
-    if ! restore_latest_backup_if_exists; then
-        echo "[space] importing demo data monopoly.sql (first run)..."
+RESTORE_APPLIED="false"
+if [ "${RESTORE_BACKUP_ON_STARTUP}" = "true" ]; then
+    if restore_latest_backup_if_exists; then
+        RESTORE_APPLIED="true"
+    else
+        append_app_log "[space] no startup backup restored (archive missing or invalid)"
+    fi
+fi
+
+if [ "${RESTORE_APPLIED}" != "true" ]; then
+    TABLE_COUNT="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='monopoly' AND table_name='map';")"
+    if [ "${TABLE_COUNT:-0}" = "0" ]; then
+        append_app_log "[space] importing demo data monopoly.sql (first run)..."
         sed 's/utf8mb4_0900_ai_ci/utf8mb4_unicode_ci/g' /app/monopoly.sql | mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" monopoly
     fi
 fi
 
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
-: > "${APP_LOG_FILE}"
-append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
+touch "${APP_LOG_FILE}"
+append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, restoreOnStartup=${RESTORE_BACKUP_ON_STARTUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
 
 echo "[space] starting user-server..."
 (
