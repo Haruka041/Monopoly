@@ -458,9 +458,11 @@ export class GameProcess {
 				//监听使用机会卡事件并且处理事件
 				this.eventMsg = `等待 ${sourcePlayer.getName()} 执行回合`;
 				this.roundTimeTimer.setTimeOutFunction(handleUseChanceCardTimeOut);
-				await operateListener.onceAsync(userId, OperateType.UseChanceCard, async (resultArr: any) => {
+				await operateListener.onceAsync(
+					userId,
+					OperateType.UseChanceCard,
+					async (chanceCardId: string, targetIdList: string[] = []) => {
 					this.roundTimeTimer.stop();
-					const [chanceCardId, targetIdList = new Array<string>()] = resultArr;
 					const chanceCard = sourcePlayer.getCardById(chanceCardId);
 					if (chanceCard) {
 						let error = ""; //收集错误信息
@@ -602,7 +604,8 @@ export class GameProcess {
 						};
 						sendToUsers([sourcePlayer.getId()], errorMsg);
 					}
-				});
+					}
+				);
 			}
 		});
 	}
@@ -718,7 +721,7 @@ export class GameProcess {
 						const playerRes = await operateListener.onceAsync(
 							arrivedPlayer.getId(),
 							OperateType.BuildHouse,
-							(data) => data[0]
+							(choice) => choice
 						);
 						this.roundRemainingTimeBroadcast(0);
 						if (playerRes) {
@@ -778,7 +781,7 @@ export class GameProcess {
 				const playerRes = await operateListener.onceAsync(
 					arrivedPlayer.getId(),
 					OperateType.BuyProperty,
-					(data) => data[0]
+					(choice) => choice
 				);
 				this.roundRemainingTimeBroadcast(0);
 				if (playerRes) {

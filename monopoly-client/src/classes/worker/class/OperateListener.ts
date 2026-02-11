@@ -14,7 +14,7 @@ export class OperateListener {
 	private setOperateListener(
 		playerId: string,
 		eventType: OperateType | string,
-		fn: (args: any[]) => void,
+		fn: (...args: any[]) => void,
 		isOnce: boolean
 	) {
 		if (!this.evetnMap.has(playerId)) {
@@ -30,8 +30,8 @@ export class OperateListener {
 
 	public onAsync(playerId: string, eventType: OperateType | string, listener: (...args: any[]) => void): Promise<any> {
 		return new Promise((resolve) => {
-			const newFn = (args: any) => {
-				resolve(listener(args));
+			const newFn = (...args: any[]) => {
+				resolve(listener(...args));
 			};
 			this.setOperateListener(playerId, eventType, newFn, false);
 		});
@@ -43,8 +43,8 @@ export class OperateListener {
 		listener: (...args: any[]) => void
 	): Promise<any> {
 		return new Promise((resolve) => {
-			const newFn = (args: any) => {
-				resolve(listener(args));
+			const newFn = (...args: any[]) => {
+				resolve(listener(...args));
 			};
 			this.setOperateListener(playerId, eventType, newFn, true);
 		});
