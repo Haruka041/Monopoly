@@ -28,3 +28,17 @@ export function compileTsToJs(code: string, prelude: string): string {
 	});
 	return result.outputText;
 }
+
+type DynamicAsyncFunction = (...args: any[]) => Promise<any>;
+
+export function createAsyncExecutor(params: string[], body: string): DynamicAsyncFunction {
+	// IMPORTANT:
+	// Do not rely on `Object.getPrototypeOf(async function(){}).constructor` directly in TS source.
+	// TS downlevels async/await for CommonJS builds, which would turn it into a normal Function at runtime.
+	// We must obtain AsyncFunction via runtime parsing to preserve native async semantics.
+	const AsyncFunctionCtor = Function("return Object.getPrototypeOf(async function(){}).constructor;")() as {
+		new (...args: string[]): DynamicAsyncFunction;
+	};
+
+	return new AsyncFunctionCtor(...params, body);
+}

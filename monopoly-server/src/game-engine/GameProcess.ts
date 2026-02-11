@@ -8,7 +8,7 @@ import { Property } from "./class/Property";
 import { RoundTimeTimer } from "./class/RoundTimeTimer";
 import { EFFECT_PRELUDE } from "./effect-prelude";
 import { ChanceCard as ChanceCardFromDB, GameInfo, GameInitInfo, GameLog, GameMap, GameSetting, MapItem, SocketMessage, UserInRoomInfo } from "./types";
-import { compileTsToJs, getRandomInteger, randomString } from "./utils";
+import { compileTsToJs, createAsyncExecutor, getRandomInteger, randomString } from "./utils";
 
 type GameProcessHooks = {
 	sendToUsers: (userIdList: string[], msg: SocketMessage) => void;
@@ -774,8 +774,7 @@ export class GameProcess {
 		} else if (arriveItem.arrivedEvent) {
 			const effectCode = arriveItem.arrivedEvent.effectCode;
 			if (effectCode) {
-				const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-				const arrivedFunction = new AsyncFunction("arrivedPlayer", "gameProcess", effectCode);
+				const arrivedFunction = createAsyncExecutor(["arrivedPlayer", "gameProcess"], effectCode);
 				await arrivedFunction(arrivedPlayer, this);
 				this.gameMsgNotifyBroadcast("info", `${arrivedPlayer.getName()} 踩到了特殊地块: ${arriveItem.arrivedEvent.name}`);
 				this.gameLogBroadcast(
