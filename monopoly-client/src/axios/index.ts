@@ -2,6 +2,7 @@ import axios from "axios";
 import FPMessage from "@/components/utils/fp-message";
 
 axios.defaults.headers.common["Authorization"] = (localStorage || window.localStorage).getItem("token");
+axios.defaults.timeout = 15000;
 
 //请求拦截器
 axios.interceptors.request.use(
@@ -33,10 +34,11 @@ axios.interceptors.response.use(
 		}
 		return response.data;
 	},
-	function (error) {
+function (error) {
 		let message = "";
-		if (error.response.status) {
-			switch (error.response.status) {
+		const status = error?.response?.status;
+		if (status) {
+			switch (status) {
 				case 400:
 					message = "请求错误(400)";
 					break;
@@ -71,9 +73,13 @@ axios.interceptors.response.use(
 					message = "HTTP版本不受支持(505)";
 					break;
 				default:
-					message = `连接出错(${error.response.status})!`;
+					message = `连接出错(${status})!`;
 			}
+		} else if (error?.code === "ECONNABORTED") {
+			message = "请求超时，请稍后重试";
+		} else {
+			message = error?.message || "网络连接失败";
 		}
-		return Promise.reject(error.response.data.msg || message);
+		return Promise.reject(error?.response?.data?.msg || message);
 	}
 );

@@ -16,14 +16,46 @@ import { routerMusic } from "./src/routers/music";
 import { roomRouter } from "./src/routers/room-router";
 import { serverLog } from "./src/utils/logger";
 import chalk from "chalk";
-import { __APIPORT__, __ICE_SERVER_PORT__, __USERSERVERHOST__ } from "./global.config";
+import { __APIPORT__, __USERSERVERHOST__ } from "./global.config";
 import { getPublicKey } from "./src/utils/api/keys";
 import { roleValidation } from "./src/utils/role-validation";
 import { routerArrivedEvent } from "./src/routers/arrived-event";
-import { RoomRouter } from "./src/classes/RoomRouter";
-import { PeerServer } from "peer";
+import { createServer } from "http";
+import { attachGameWsGateway } from "./src/ws/game-room-manager";
 
 // import { roleValidation } from "./src/utils/role-validation";
+const enableAccessLog = process.env.ENABLE_ACCESS_LOG !== "false";
+
+const accessLogMiddleware: RequestHandler = (req, res, next) => {
+	const start = Date.now();
+	res.on("finish", () => {
+		serverLog(
+			`${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`,
+			"http"
+		);
+	});
+	next();
+};
+
+const normalizeLegacyProxyPath: RequestHandler = (req, _res, next) => {
+	// Some stale browser bundles may accidentally include duplicated proxy prefixes
+	// (e.g. /monopoly-server/monopoly-server/*). Normalize them server-side so
+	// users can still play before cache refresh.
+	if (req.url.startsWith("/monopoly-server/")) {
+		req.url = req.url.replace(/^\/monopoly-server/, "");
+	} else if (req.url === "/monopoly-server") {
+		req.url = "/";
+	}
+
+	// Legacy/stale clients may route user-server paths through monopoly-server.
+	// Normalize prefix so router-level fallback handlers can process them.
+	if (req.url.startsWith("/user-server/")) {
+		req.url = req.url.replace(/^\/user-server/, "");
+	} else if (req.url === "/user-server") {
+		req.url = "/";
+	}
+	next();
+};
 
 async function bootstrap() {
 	try {
@@ -39,10 +71,17 @@ async function bootstrap() {
 		app.use(cors());
 
 		app.use("/static", express.static("public"));
+		app.use(normalizeLegacyProxyPath);
 
 		app.use(roleValidation); //身份验证
 
 		app.use(bodyParser.json());
+		if (enableAccessLog) {
+			app.use(accessLogMiddleware);
+			serverLog(`${chalk.bold.bgGreen(" HTTP访问日志已开启 ")}`);
+		} else {
+			serverLog(`${chalk.bold.bgYellow(" HTTP访问日志已关闭 ")}`, "warn");
+		}
 
 		app.use("/user", routerUser);
 		app.use("/role", routerRole);
@@ -65,12 +104,11 @@ async function bootstrap() {
 
 		app.use(handleError);
 
-		app.listen(__APIPORT__, () => {
-			serverLog(`${chalk.bold.bgGreen(` API服务启动成功 ${__APIPORT__}端口`)}`);
-		});
+		const httpServer = createServer(app);
+		attachGameWsGateway(httpServer);
 
-		const peerServer = PeerServer({ port: __ICE_SERVER_PORT__ }, () => {
-			serverLog(`${chalk.bold.bgGreen(` ICE服务启动成功 ${__ICE_SERVER_PORT__}端口`)}`);
+		httpServer.listen(__APIPORT__, () => {
+			serverLog(`${chalk.bold.bgGreen(` API服务启动成功 ${__APIPORT__}端口`)}`);
 		});
 	} catch (e: any) {
 		serverLog(`${chalk.bold.bgRed(` 服务器出错: `)}`, "error");

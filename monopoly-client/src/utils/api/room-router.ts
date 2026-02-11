@@ -12,13 +12,13 @@ export async function joinRoomApi(roomId: string) {
 		headers: getAuthHeaders(),
 	})) as any;
 
-	// 200: { status, data: {...} }, 202: { status, msg }
+	// 200: { status, data: {...} }
 	if (res?.data) {
-		const { hostPeerId, needCreate, deleteIntervalMs } = res.data;
-		return { hostPeerId, needCreate, deleteIntervalMs };
+		const { hostPeerId = "", needCreate = false, deleteIntervalMs = 0, wsPath = "/monopoly-server/ws/game" } = res.data;
+		return { hostPeerId, needCreate, deleteIntervalMs, wsPath };
 	}
 
-	throw new Error(res?.msg || "服务器正在与房主建立联系, 请稍后重试");
+	throw new Error(res?.msg || "连接房间服务器失败");
 }
 
 export async function emitHostPeerId(roomId: string, hostPeerId: string, hostName: string, hostId: string) {

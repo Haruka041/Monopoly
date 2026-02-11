@@ -1,19 +1,14 @@
-import Peer, { DataConnection } from "peerjs";
-import { ChangeRoleOperate, MonopolyWebSocketMsgType, SocketMsgType } from "@/enums/bace";
+import { ChangeRoleOperate, SocketMsgType } from "@/enums/bace";
 import {
 	ChatMessage,
 	GameLog,
 	GameSetting,
-	MonopolyWebSocketMsg,
 	Room,
 	RoomInfo,
 	SocketMessage,
 	User,
 } from "@/interfaces/bace";
-import { base64ToFileUrl, debounce, throttle } from "@/utils";
-import { asyncMissionQueue } from "@/utils/async-mission-queue";
-import { MonopolyHost } from "@/classes/monopoly-host/MonopolyHost";
-import { PeerClient } from "@/classes/monopoly-client/PeerClient";
+import { debounce } from "@/utils";
 import FPMessage from "@/components/utils/fp-message";
 import {
 	useChat,
@@ -34,8 +29,9 @@ import { createVNode } from "vue";
 import PropertyInfoVue from "@/components/common/property-card.vue";
 import { FPMessageBox } from "@/components/utils/fp-message-box";
 import { OperateType } from "@/enums/game";
-import { emitHostPeerId, emitRoomHeart, joinRoomApi } from "@/utils/api/room-router";
+import { joinRoomApi } from "@/utils/api/room-router";
 import { GameEvents } from "../../enums/game";
+import { __MONOPOLYSERVER__ } from "@G/global.config";
 
 type MonopolyClientOptions = {
 	iceServer: {
@@ -46,16 +42,11 @@ type MonopolyClientOptions = {
 
 export class MonopolyClient {
 	private userId: string | undefined;
-	private peerId: string | undefined;
 	private roomId: string | undefined;
+	private socketPath = `${__MONOPOLYSERVER__}/ws/game`;
+	private socket: WebSocket | null = null;
+	private manualClose = false;
 
-	private options: MonopolyClientOptions;
-	private iceServerHost: string;
-	private iceServerPort: number;
-
-	private peerClient: PeerClient | null = null;
-	private conn: DataConnection | null = null;
-	private gameHost: MonopolyHost | null = null;
 	private isOnline = false;
 
 	private intervalList: any[] = [];
@@ -91,70 +82,59 @@ export class MonopolyClient {
 		}
 	}
 
-	private constructor(options: MonopolyClientOptions) {
-		const {
-			iceServer: { host: iceHost, port: icePort },
-		} = options;
-
-		this.options = options;
-		this.iceServerHost = iceHost;
-		this.iceServerPort = icePort;
-	}
+	private constructor(_options: MonopolyClientOptions) {}
 
 	public async joinRoom(roomId: string) {
-		console.log("🚀 ~ MonopolyClient ~ joinRoom ~ roomId:", roomId);
 		try {
 			const data = await joinRoomApi(roomId);
-			const userStore = useUserInfo();
-			let hostPeerId = data.hostPeerId;
-
-			if (data.needCreate) {
-				useLoading().showLoading("正在创建主机...");
-				if (this.gameHost) throw Error("你已经是主机了,为什么要再次创建房间!!!");
-				// 创建一个临时的 URL 指向 Blob 数据
-				this.gameHost = await MonopolyHost.create(
-					roomId,
-					this.iceServerHost,
-					this.iceServerPort,
-					data.deleteIntervalMs
-				);
-				this.gameHost.addDestoryListener(() => {
-					this.gameHost = null;
-					this.peerClient = null;
-				});
-				hostPeerId = this.gameHost.getPeerId();
-				useLoading().showLoading("主机创建成功，正在和服务器报喜...");
-				await emitHostPeerId(roomId, hostPeerId, userStore.username, userStore.userId);
-			}
-			if (hostPeerId) {
-				useLoading().showLoading("连接主机中...");
-				await this.linkToGameHost(hostPeerId);
-			}
+			this.roomId = roomId;
+			this.socketPath = data.wsPath || `${__MONOPOLYSERVER__}/ws/game`;
+			useLoading().showLoading("连接房间服务器中...");
+			await this.linkToGameServer(roomId);
 		} catch (e) {
 			FPMessage({ type: "error", message: this.getErrorMessage(e, "服务器连接失败") });
 		}
 	}
 
-	private async linkToGameHost(hostPeerId: string) {
+	private async linkToGameServer(roomId: string) {
 		try {
-			if (!this.peerClient) {
-				this.peerClient = await PeerClient.create(this.iceServerHost, this.iceServerPort);
-			}
-			const { conn, peer } = await this.peerClient.linkToHost(hostPeerId);
-			this.conn = conn;
+			const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+			const wsPath = this.socketPath.startsWith("/") ? this.socketPath : `/${this.socketPath}`;
+			const wsUrl = `${wsProtocol}://${window.location.host}${wsPath}?roomId=${encodeURIComponent(roomId)}`;
+
+			const socket = await new Promise<WebSocket>((resolve, reject) => {
+				const ws = new WebSocket(wsUrl);
+				const timeout = window.setTimeout(() => {
+					try {
+						ws.close();
+					} catch {}
+					reject(new Error("连接房间超时，请稍后重试"));
+				}, 12000);
+
+				ws.onopen = () => {
+					window.clearTimeout(timeout);
+					resolve(ws);
+				};
+				ws.onerror = () => {
+					window.clearTimeout(timeout);
+					reject(new Error("连接房间失败"));
+				};
+			});
+
+			this.socket = socket;
+			this.manualClose = false;
 			const { userId, username, color, avatar } = useUserInfo();
-			const user: User = {
-				userId,
-				username,
-				color,
-				avatar,
-				isReady: false,
-			};
-			this.sendMsg(SocketMsgType.JoinRoom, user);
+			const user: User = { userId, username, color, avatar, isReady: false };
+			this.sendRaw({
+				type: SocketMsgType.JoinRoom,
+				source: userId,
+				roomId,
+				data: user,
+			});
 
 			FPMessage({
 				type: "success",
-				message: "主机连接成功🤗",
+				message: "房间连接成功🤗",
 			});
 			this.isOnline = true;
 
@@ -165,9 +145,8 @@ export class MonopolyClient {
 				}, 3000)
 			);
 
-			this.conn.on("data", (_data: any) => {
-				// const data = JSON.parse(_data as string);
-				const data: SocketMessage = JSON.parse(_data);
+			socket.onmessage = (ev: MessageEvent<string>) => {
+				const data: SocketMessage = JSON.parse(ev.data);
 				if (data.msg) {
 					FPMessage({
 						type: data.msg.type as "info" | "success" | "warning" | "error",
@@ -264,39 +243,37 @@ export class MonopolyClient {
 					default:
 						break;
 				}
-			});
+			};
 
-			this.conn.on("close", () => {
-				console.log("🚀 ~ MonopolyHost ~ conn.on ~ close:");
-				if (this.isOnline) {
+			socket.onclose = () => {
+				if (this.isOnline && !this.manualClose) {
 					this.isOnline = false;
 					FPMessage({
 						type: "error",
-						message: "与主机断开连接, 即将返回主页, 输入id进入房间即可重新连接",
+						message: "与房间服务器断开连接，即将返回房间列表",
 						onClosed: () => {
 							router.replace("room-router");
 							this.destory();
 						},
 					});
 				}
-			});
+			};
 
-			this.conn.on("error", (err) => {
-				console.log("🚀 ~ MonopolyHost ~ conn.on ~ error:", err.type);
-				if (this.isOnline && err.type === "not-open-yet") {
+			socket.onerror = () => {
+				if (this.isOnline && !this.manualClose) {
 					this.isOnline = false;
 					FPMessage({
 						type: "error",
-						message: "与主机断开连接, 即将返回主页, 输入id进入房间即可重新连接",
+						message: "与房间服务器断开连接，即将返回房间列表",
 						onClosed: () => {
 							router.replace("room-router");
 							this.destory();
 						},
 					});
 				}
-			});
+			};
 		} catch (e: any) {
-			FPMessage({ type: "error", message: this.getErrorMessage(e, "连接主机失败") });
+			FPMessage({ type: "error", message: this.getErrorMessage(e, "连接房间失败") });
 		}
 	}
 
@@ -311,7 +288,7 @@ export class MonopolyClient {
 		() => {
 			FPMessage({
 				type: "error",
-				message: "与主机断开连接, 即将返回主页, 输入id进入房间即可重新连接",
+				message: "与房间服务器断开连接，即将返回房间列表",
 				onClosed: () => {
 					router.replace("room-router");
 					this.destory();
@@ -621,14 +598,21 @@ export class MonopolyClient {
 		this.intervalList.forEach((i) => {
 			clearInterval(i);
 		});
-		this.conn = null;
-		this.peerClient && this.peerClient.destory();
-		this.peerClient = null;
-		this.gameHost && this.gameHost.destory();
+		this.intervalList = [];
+		if (this.socket) {
+			this.manualClose = true;
+			if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+				this.socket.close(1000, "client-destroy");
+			}
+		}
+		this.socket = null;
 	}
 
 	public disConnect() {
-		this.conn && this.conn.close();
+		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+			this.manualClose = true;
+			this.socket.close(1000, "client-disconnect");
+		}
 		this.destory();
 	}
 
@@ -641,10 +625,12 @@ export class MonopolyClient {
 			data,
 			extra,
 		};
-		// this.conn && this.conn.send(JSON.stringify(msgToSend));
-		if (this.conn) {
-			await this.conn.send(JSON.stringify(msgToSend));
-		}
+		this.sendRaw(msgToSend);
+	}
+
+	private sendRaw(msg: SocketMessage) {
+		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+		this.socket.send(JSON.stringify(msg));
 	}
 
 	public static destoryInstance() {

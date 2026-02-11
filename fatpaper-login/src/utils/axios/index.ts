@@ -4,6 +4,7 @@ import { __USERSERVER__ } from "@G/global.config";
 
 axios.defaults.baseURL = __USERSERVER__;
 axios.defaults.headers.common["Authorization"] = localStorage.getItem("token");
+axios.defaults.timeout = 15000;
 
 //请求拦截器
 axios.interceptors.request.use(
@@ -49,7 +50,8 @@ axios.interceptors.response.use(
 	},
 	async function (error) {
 		let message = "";
-		switch (error.response.status) {
+		const status = error?.response?.status;
+		switch (status) {
 			case 400:
 				message = "请求错误(400)";
 				break;
@@ -84,11 +86,15 @@ axios.interceptors.response.use(
 				message = "HTTP版本不受支持(505)";
 				break;
 			default:
-				message = `连接出错(${error.response.status})!`;
+				if (error?.code === "ECONNABORTED") {
+					message = "请求超时，请稍后重试";
+				} else {
+					message = status ? `连接出错(${status})!` : error?.message || "网络连接失败";
+				}
 		}
 		FPMessage({
 			type: "error",
-			message: error.response.data.msg || message,
+			message: error?.response?.data?.msg || message,
 		});
 		return Promise.reject(error);
 	}

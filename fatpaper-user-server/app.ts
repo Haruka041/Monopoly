@@ -1,12 +1,35 @@
 import "reflect-metadata";
 import AppDataSource from "./src/utils/db/dbConnecter";
-import express from "express";
+import express, { RequestHandler } from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import routerUser from "./src/routers/user";
 import {serverLog} from "./src/utils/logger";
 import chalk from "chalk";
 import {APIPORT} from "./src/static";
+
+const enableAccessLog = process.env.ENABLE_ACCESS_LOG !== "false";
+
+const accessLogMiddleware: RequestHandler = (req, res, next) => {
+	const start = Date.now();
+	res.on("finish", () => {
+		serverLog(
+			`${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`,
+			"http"
+		);
+	});
+	next();
+};
+
+const normalizeLegacyProxyPath: RequestHandler = (req, _res, next) => {
+	// Allow stale/cached clients or proxy rewrites that include duplicated prefixes.
+	if (req.url.startsWith("/user-server/")) {
+		req.url = req.url.replace(/^\/user-server/, "");
+	} else if (req.url === "/user-server") {
+		req.url = "/";
+	}
+	next();
+};
 
 async function bootstrap() {
     try {
@@ -24,9 +47,17 @@ async function bootstrap() {
 
         app.use("/static", express.static("public"));
 
+        app.use(normalizeLegacyProxyPath);
+
         // app.use(roleValidation);
 
         app.use(bodyParser.json());
+        if (enableAccessLog) {
+            app.use(accessLogMiddleware);
+            serverLog(`${chalk.bold.bgGreen(" HTTP访问日志已开启 ")}`);
+        } else {
+            serverLog(`${chalk.bold.bgYellow(" HTTP访问日志已关闭 ")}`, "warn");
+        }
 
         app.use("/user", routerUser);
 

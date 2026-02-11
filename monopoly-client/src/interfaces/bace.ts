@@ -1,6 +1,5 @@
 import { ChanceCardType, GameOverRule } from "@/enums/game";
 import { ChatMessageType, MonopolyWebSocketMsgType, SocketMsgType } from "@/enums/bace";
-import { DataConnection } from "peerjs";
 
 export type MonopolyWebSocketMsg = {
 	type: MonopolyWebSocketMsgType;

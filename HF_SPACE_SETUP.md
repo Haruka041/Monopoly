@@ -50,6 +50,7 @@
 - `BACKUP_KEEP_COUNT`（默认 `100`）
 - `BACKUP_TRIGGER_LINES`（默认 `100`）
 - `BACKUP_INTERVAL_MIN`（默认 `0`，可选；>0 时按分钟额外定时备份）
+- `ENABLE_ACCESS_LOG`（默认 `true`；开启后会输出每个 API 请求日志，便于排查并驱动日志行触发备份）
 - `BACKUP_REPO`（示例：`Haruka041/monopoly-backup`）
 - `BACKUP_REPO_TYPE`（`dataset`/`space`/`model`，默认 `dataset`）
 - `BACKUP_BRANCH`（默认 `main`）

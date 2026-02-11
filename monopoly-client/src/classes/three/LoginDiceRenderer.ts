@@ -23,22 +23,46 @@ export class LoginDiceRenderer extends DiceRenderer {
         if (!this.imagePlane) return;
         if (imgUrl) {
             const textureLoader = new THREE.TextureLoader();
-            const texture = await new Promise<THREE.Texture>((resolve, reject) => {
-                textureLoader.load(imgUrl, (texture) => {
-                    texture.matrixAutoUpdate = false
-                    texture.colorSpace = THREE.SRGBColorSpace
-                    resolve(texture);
-                });
+            const texture = await new Promise<THREE.Texture | null>((resolve) => {
+                let finished = false;
+                const done = (value: THREE.Texture | null) => {
+                    if (finished) return;
+                    finished = true;
+                    resolve(value);
+                };
+                const timeoutId = window.setTimeout(() => done(null), 8000);
+                textureLoader.load(
+                    imgUrl,
+                    (texture) => {
+                        window.clearTimeout(timeoutId);
+                        texture.matrixAutoUpdate = false;
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        done(texture);
+                    },
+                    undefined,
+                    () => {
+                        window.clearTimeout(timeoutId);
+                        done(null);
+                    }
+                );
             });
 
             await super.stopRotate([1]);
-            const material = new THREE.MeshBasicMaterial({
-                transparent: true,
-                map: texture,
-                side: THREE.DoubleSide,
-            });
-            material.map && material.map.matrix.scale(0.6, 0.6).translate(0.5, 0.5)
-            this.imagePlane.material = material;
+            if (texture) {
+                const material = new THREE.MeshBasicMaterial({
+                    transparent: true,
+                    map: texture,
+                    side: THREE.DoubleSide,
+                });
+                material.map && material.map.matrix.scale(0.6, 0.6).translate(0.5, 0.5);
+                this.imagePlane.material = material;
+            } else {
+                this.imagePlane.material = new THREE.MeshBasicMaterial({
+                    opacity: 0,
+                    transparent: true,
+                    side: THREE.DoubleSide,
+                });
+            }
             //获取图片后，停止转动;
         } else {
             await super.stopRotate([1]);
