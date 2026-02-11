@@ -21,7 +21,7 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
 
-RUN apt-get update && apt-get install -y --no-install-recommends nginx mariadb-server curl ca-certificates git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends nginx mariadb-server curl ca-certificates git zip unzip && rm -rf /var/lib/apt/lists/*
 
 COPY --from=source /app /app
 

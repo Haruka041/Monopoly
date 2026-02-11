@@ -39,15 +39,16 @@
 - 免费 `cpu-basic` 的容器磁盘会重置，数据库数据可能丢失。
 - 建议在 Space 开启 **Persistent Storage**（`/data` 路径）。
 - 已内置自动备份，默认开启；备份文件会写到 `/data/backups`（无持久盘时是临时目录）。
-- 启动时会尝试从 HF 备份仓库拉取并恢复最近备份。
-- 默认每累计 `100` 行应用日志触发一次自动备份，同时每 `1` 分钟做一次定时备份（最小间隔 `60` 秒），并自动清理旧备份（默认保留 `100` 份）。
+- 备份格式为**单文件覆盖**：`data_backup.zip`（包含 `db/*.sql.gz` + `assets/avatars`）。
+- 启动时会优先从 HF 备份仓库拉取 `data_backup.zip` 并恢复。
+- 默认每累计 `100` 行应用日志触发一次自动备份，同时每 `1` 分钟做一次定时备份（最小间隔 `60` 秒）。
 
 可选 Variables：
 
 - `MYSQL_DATA_DIR`（默认：有 `/data` 时用 `/data/mysql`，否则 `/var/lib/mysql`）
 - `BACKUP_DIR`（默认：有 `/data` 时用 `/data/backups`，否则 `/var/backups/monopoly`）
 - `ENABLE_AUTO_BACKUP`（默认 `true`）
-- `BACKUP_KEEP_COUNT`（默认 `100`）
+- `BACKUP_ARCHIVE_NAME`（默认 `data_backup.zip`）
 - `BACKUP_TRIGGER_LINES`（默认 `100`）
 - `BACKUP_INTERVAL_MIN`（默认 `1`，可选；>0 时按分钟额外定时备份）
 - `BACKUP_MIN_INTERVAL_SEC`（默认 `60`；日志触发与定时触发的最小备份间隔）

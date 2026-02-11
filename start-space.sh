@@ -35,6 +35,7 @@ export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-1}"
 export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
 export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-60}"
 export BACKUP_HEARTBEAT_INTERVAL_SEC="${BACKUP_HEARTBEAT_INTERVAL_SEC:-60}"
+export BACKUP_ARCHIVE_NAME="${BACKUP_ARCHIVE_NAME:-data_backup.zip}"
 export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
@@ -52,8 +53,9 @@ else
 fi
 
 BACKUP_REPO_DIR="${BACKUP_REPO_DIR:-/tmp/hf-backup-repo}"
-BACKUP_REPO_DATA_DIR="${BACKUP_REPO_DATA_DIR:-${BACKUP_REPO_DIR}/db}"
-BACKUP_REPO_AVATAR_DIR="${BACKUP_REPO_AVATAR_DIR:-${BACKUP_REPO_DIR}/assets/avatars}"
+BACKUP_REPO_ARCHIVE_PATH="${BACKUP_REPO_ARCHIVE_PATH:-${BACKUP_REPO_DIR}/${BACKUP_ARCHIVE_NAME}}"
+BACKUP_WORK_DIR="${BACKUP_WORK_DIR:-/tmp/monopoly-backup-work}"
+BACKUP_RESTORE_DIR="${BACKUP_RESTORE_DIR:-/tmp/monopoly-backup-restore}"
 BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
@@ -257,44 +259,24 @@ ensure_backup_repo() {
 
     git -C "${BACKUP_REPO_DIR}" config user.email "space-backup@local" >/dev/null 2>&1 || true
     git -C "${BACKUP_REPO_DIR}" config user.name "space-backup-bot" >/dev/null 2>&1 || true
-    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}"
     return 0
-}
-
-prune_backup_dir() {
-    local target_dir="$1"
-    local keep_count="$2"
-    local mono_files=( "${target_dir}"/monopoly_*.sql "${target_dir}"/monopoly_*.sql.gz )
-    local user_files=( "${target_dir}"/fatpaper_user_*.sql "${target_dir}"/fatpaper_user_*.sql.gz )
-
-    if [ "${#mono_files[@]}" -gt "${keep_count}" ]; then
-        mapfile -t mono_sorted < <(ls -1t "${mono_files[@]}")
-        rm -f "${mono_sorted[@]:${keep_count}}"
-    fi
-
-    if [ "${#user_files[@]}" -gt "${keep_count}" ]; then
-        mapfile -t user_sorted < <(ls -1t "${user_files[@]}")
-        rm -f "${user_sorted[@]:${keep_count}}"
-    fi
 }
 
 sync_backups_from_repo() {
     if ! ensure_backup_repo; then
         return 0
     fi
-    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}" "${AVATAR_STORE_DIR}"
-    cp -f "${BACKUP_REPO_DATA_DIR}"/monopoly_*.sql "${BACKUP_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql "${BACKUP_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_REPO_DATA_DIR}"/monopoly_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
-    cp -af "${BACKUP_REPO_AVATAR_DIR}/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
-    local mono_count
-    local user_count
-    local avatar_count
-    mono_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "monopoly_*.sql" -o -name "monopoly_*.sql.gz" \) | wc -l | tr -d ' ')"
-    user_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "fatpaper_user_*.sql" -o -name "fatpaper_user_*.sql.gz" \) | wc -l | tr -d ' ')"
-    avatar_count="$(find "${AVATAR_STORE_DIR}" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-    append_app_log "[space] backup repo sync finished: monopoly=${mono_count}, fatpaper_user=${user_count}, avatars=${avatar_count}"
+
+    mkdir -p "${BACKUP_DIR}"
+    if [ ! -f "${BACKUP_REPO_ARCHIVE_PATH}" ]; then
+        append_app_log "[space] backup repo sync: no ${BACKUP_ARCHIVE_NAME} found in repo"
+        return 0
+    fi
+
+    cp -f "${BACKUP_REPO_ARCHIVE_PATH}" "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}"
+    local archive_size
+    archive_size="$(du -h "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" | awk '{print $1}')"
+    append_app_log "[space] backup repo sync finished: ${BACKUP_ARCHIVE_NAME} (${archive_size})"
 }
 
 sync_backups_to_repo() {
@@ -305,24 +287,56 @@ sync_backups_to_repo() {
         return 0
     fi
 
-    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}"
-    cp -f "${BACKUP_DIR}"/monopoly_*.sql "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_DIR}"/fatpaper_user_*.sql "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_DIR}"/monopoly_*.sql.gz "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
-    cp -f "${BACKUP_DIR}"/fatpaper_user_*.sql.gz "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
-    cp -af "${AVATAR_STORE_DIR}/." "${BACKUP_REPO_AVATAR_DIR}/" 2>/dev/null || true
-    prune_backup_dir "${BACKUP_REPO_DATA_DIR}" "${BACKUP_KEEP_COUNT}"
+    if [ ! -f "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" ]; then
+        append_app_log "[space] backup repo sync skipped (${reason}): ${BACKUP_ARCHIVE_NAME} missing"
+        return 1
+    fi
 
-    git -C "${BACKUP_REPO_DIR}" add db assets/avatars >/dev/null 2>&1 || true
+    cp -f "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" "${BACKUP_REPO_ARCHIVE_PATH}"
+    rm -rf "${BACKUP_REPO_DIR}/db" "${BACKUP_REPO_DIR}/assets"
+
+    git -C "${BACKUP_REPO_DIR}" add -A "${BACKUP_ARCHIVE_NAME}" >/dev/null 2>&1 || true
+    git -C "${BACKUP_REPO_DIR}" add -A db assets >/dev/null 2>&1 || true
     if git -C "${BACKUP_REPO_DIR}" diff --cached --quiet; then
         append_app_log "[space] backup repo unchanged (${reason}), skip push"
         return 0
     fi
-    git -C "${BACKUP_REPO_DIR}" commit -m "backup: ${reason} ${ts}" >/dev/null 2>&1 || true
+    git -C "${BACKUP_REPO_DIR}" commit -m "Automated backup ${ts} (${reason})" >/dev/null 2>&1 || true
     git -C "${BACKUP_REPO_DIR}" push origin "${BACKUP_BRANCH}" >/dev/null 2>&1 || {
         append_app_log "[space] backup repo push failed (${reason}): please verify BACKUP_REPO and HF token write permission"
         return 1
     }
+}
+
+build_backup_archive() {
+    local ts="$1"
+    local reason="$2"
+    local work_dir="${BACKUP_WORK_DIR}"
+    local output_file="${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}"
+    local metadata_file="${work_dir}/meta.json"
+
+    rm -rf "${work_dir}"
+    mkdir -p "${work_dir}/db" "${work_dir}/assets/avatars" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}"
+
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly | gzip -1 > "${work_dir}/db/monopoly.sql.gz" || return 1
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user | gzip -1 > "${work_dir}/db/fatpaper_user.sql.gz" || return 1
+    cp -af "${AVATAR_STORE_DIR}/." "${work_dir}/assets/avatars/" 2>/dev/null || true
+
+    cat > "${metadata_file}" <<EOF
+{
+  "timestamp": "${ts}",
+  "reason": "${reason}",
+  "format": "monopoly-backup-zip-v1"
+}
+EOF
+
+    rm -f "${output_file}"
+    (
+        cd "${work_dir}"
+        zip -q -r -9 "${output_file}" db assets meta.json
+    ) || return 1
+
+    return 0
 }
 
 acquire_backup_lock() {
@@ -367,16 +381,15 @@ backup_once() {
     local rc=0
     local ts
     ts="$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "${BACKUP_DIR}"
-    mkdir -p "${AVATAR_STORE_DIR}"
     append_app_log "[space] backup started (${reason}) at ${ts}"
 
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly | gzip -1 > "${BACKUP_DIR}/monopoly_${ts}.sql.gz"
-    if [ $? -ne 0 ]; then rc=1; fi
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user | gzip -1 > "${BACKUP_DIR}/fatpaper_user_${ts}.sql.gz"
-    if [ $? -ne 0 ]; then rc=1; fi
+    build_backup_archive "${ts}" "${reason}" || rc=1
+    local archive_size
+    archive_size="$(du -h "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" 2>/dev/null | awk '{print $1}')"
+    if [ -n "${archive_size}" ]; then
+        append_app_log "[space] backup archive ready: ${BACKUP_ARCHIVE_NAME} (${archive_size})"
+    fi
 
-    prune_backup_dir "${BACKUP_DIR}" "${BACKUP_KEEP_COUNT}"
     sync_backups_to_repo "${reason}" "${ts}" || rc=1
     if [ "${rc}" -eq 0 ]; then
         date +%s > "${BACKUP_LAST_RUN_FILE}" || true
@@ -401,13 +414,55 @@ restore_sql_into_db() {
 }
 
 restore_latest_backup_if_exists() {
+    local archive_file="${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}"
+    local mono_from_archive=""
+    local user_from_archive=""
+    local legacy_mono_candidates=( "${BACKUP_DIR}"/monopoly_*.sql "${BACKUP_DIR}"/monopoly_*.sql.gz )
+    local legacy_user_candidates=( "${BACKUP_DIR}"/fatpaper_user_*.sql "${BACKUP_DIR}"/fatpaper_user_*.sql.gz )
     local mono_candidates=( "${BACKUP_DIR}"/monopoly_*.sql "${BACKUP_DIR}"/monopoly_*.sql.gz )
     local user_candidates=( "${BACKUP_DIR}"/fatpaper_user_*.sql "${BACKUP_DIR}"/fatpaper_user_*.sql.gz )
     local latest_mono=""
     local latest_user=""
     local ts=""
 
-    if [ "${#mono_candidates[@]}" -eq 0 ]; then
+    mkdir -p "${AVATAR_STORE_DIR}"
+
+    if [ -f "${archive_file}" ]; then
+        rm -rf "${BACKUP_RESTORE_DIR}"
+        mkdir -p "${BACKUP_RESTORE_DIR}"
+        append_app_log "[space] restoring backup archive: ${archive_file}"
+        if unzip -oq "${archive_file}" -d "${BACKUP_RESTORE_DIR}" >/dev/null 2>&1; then
+            if [ -f "${BACKUP_RESTORE_DIR}/db/monopoly.sql.gz" ]; then
+                mono_from_archive="${BACKUP_RESTORE_DIR}/db/monopoly.sql.gz"
+            elif [ -f "${BACKUP_RESTORE_DIR}/db/monopoly.sql" ]; then
+                mono_from_archive="${BACKUP_RESTORE_DIR}/db/monopoly.sql"
+            fi
+            if [ -f "${BACKUP_RESTORE_DIR}/db/fatpaper_user.sql.gz" ]; then
+                user_from_archive="${BACKUP_RESTORE_DIR}/db/fatpaper_user.sql.gz"
+            elif [ -f "${BACKUP_RESTORE_DIR}/db/fatpaper_user.sql" ]; then
+                user_from_archive="${BACKUP_RESTORE_DIR}/db/fatpaper_user.sql"
+            fi
+
+            if [ -n "${mono_from_archive}" ]; then
+                append_app_log "[space] restoring backup db: ${mono_from_archive}"
+                restore_sql_into_db "monopoly" "${mono_from_archive}"
+                if [ -n "${user_from_archive}" ]; then
+                    append_app_log "[space] restoring backup db: ${user_from_archive}"
+                    restore_sql_into_db "fatpaper_user" "${user_from_archive}"
+                fi
+                if [ -d "${BACKUP_RESTORE_DIR}/assets/avatars" ]; then
+                    cp -af "${BACKUP_RESTORE_DIR}/assets/avatars/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
+                fi
+                append_app_log "[space] backup restore completed from ${BACKUP_ARCHIVE_NAME}"
+                return 0
+            fi
+            append_app_log "[space] backup archive extracted but db files not found, fallback to legacy backups"
+        else
+            append_app_log "[space] backup archive unzip failed, fallback to legacy backups"
+        fi
+    fi
+
+    if [ "${#legacy_mono_candidates[@]}" -eq 0 ]; then
         return 1
     fi
 
@@ -425,10 +480,10 @@ restore_latest_backup_if_exists() {
         latest_user="$(ls -1t "${user_candidates[@]}" | head -n1)"
     fi
 
-    echo "[space] restoring backup: ${latest_mono}"
+    append_app_log "[space] restoring legacy backup: ${latest_mono}"
     restore_sql_into_db "monopoly" "${latest_mono}"
     if [ -n "${latest_user}" ]; then
-        echo "[space] restoring backup: ${latest_user}"
+        append_app_log "[space] restoring legacy backup: ${latest_user}"
         restore_sql_into_db "fatpaper_user" "${latest_user}"
     fi
     return 0
@@ -596,7 +651,7 @@ fi
 
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
 : > "${APP_LOG_FILE}"
-append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
+append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
 
 echo "[space] starting user-server..."
 (
