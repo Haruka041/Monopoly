@@ -130,18 +130,28 @@ async function loadGameMapInfo(id: string) {
 
 export const getMapsList = async (page: number, size: number, isAdmin: boolean) => {
 	const total = await mapRepository.count();
+	const shouldPage = page > 0 && size > 0 && size < total;
 	let mapsList = await mapRepository.find({
 		relations: ["mapItems", "mapItems.type", "mapItems.type.model", "chanceCards"],
-		skip: page > 0 ? (page - 1) * size : undefined,
-		take: page > 0 ? size : undefined,
+		skip: shouldPage ? (page - 1) * size : undefined,
+		take: shouldPage ? size : undefined,
 	});
 	mapsList.map((map) => {
 		map.itemTypes = getItemTypesFromMapItems(map.mapItems) as any;
 		return map;
 	});
+	const deduped = new Map<string, GameMap>();
+	mapsList.forEach((map) => {
+		if (!deduped.has(map.id)) deduped.set(map.id, map);
+	});
+	mapsList = Array.from(deduped.values());
 	const showAllMaps = process.env.MAP_LIST_SHOW_ALL !== "false";
 	if (!isAdmin && !showAllMaps) {
 		mapsList = mapsList.filter((m) => m.inUse);
+	}
+	if (process.env.MAP_LIST_DEBUG === "true") {
+		const summary = mapsList.map((m) => `${m.id}:${m.name}:${m.inUse ? "on" : "off"}`).join(", ");
+		console.log(`[map-list] total=${total} returned=${mapsList.length} page=${page} size=${size} showAll=${showAllMaps} :: ${summary}`);
 	}
 	return { mapsList, total };
 };

@@ -504,20 +504,31 @@ export class GameProcess {
 		}
 		await new Promise<void>(async (resolve) => {
 			let isRoundEnd = false;
+			let resolved = false;
 
-			const handleRollDice = () => {
-				isRoundEnd = true;
-				this.operateListener.removeAll(userId, OperateType.UseChanceCard);
-				this.roundTimeTimer.stop();
+			const resolveOnce = () => {
+				if (resolved) return;
+				resolved = true;
 				resolve();
 			};
 
+			const handleRollDice = () => {
+				if (resolved) return;
+				isRoundEnd = true;
+				this.operateListener.removeAll(userId, OperateType.UseChanceCard);
+				this.roundTimeTimer.stop();
+				resolveOnce();
+			};
+
 			const handleUseChanceCardTimeOut = () => {
+				if (resolved) return;
 				isRoundEnd = true;
 				this.operateListener.remove(userId, OperateType.RollDice, handleRollDice);
 				this.operateListener.removeAll(userId, OperateType.UseChanceCard);
+				this.roundTimeTimer.stop();
 				// Mark for auto roll in the next phase to avoid missing a pre-emitted event.
 				sourcePlayer.extras.autoRollNext = true;
+				resolveOnce();
 			};
 
 			this.operateListener.once(userId, OperateType.RollDice, handleRollDice);
