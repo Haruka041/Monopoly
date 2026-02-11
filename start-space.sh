@@ -3,6 +3,8 @@ set -Eeuo pipefail
 shopt -s nullglob
 
 export NODE_ENV=production
+export NODE_MAX_OLD_SPACE_SIZE="${NODE_MAX_OLD_SPACE_SIZE:-512}"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}}"
 
 export FATPAPER_DOMAIN="${FATPAPER_DOMAIN:-localhost}"
 export PROTOCOL="${PROTOCOL:-https}"
@@ -22,6 +24,7 @@ export ENABLE_AUTO_BACKUP="${ENABLE_AUTO_BACKUP:-true}"
 export BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-100}"
 export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-0}"
 export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
+export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-300}"
 export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
@@ -41,6 +44,7 @@ BACKUP_REPO_DATA_DIR="${BACKUP_REPO_DATA_DIR:-${BACKUP_REPO_DIR}/db}"
 BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
+BACKUP_LAST_RUN_FILE="${BACKUP_LAST_RUN_FILE:-/tmp/monopoly-backup-last-run}"
 
 cleanup() {
     echo "[space] shutting down services..."
@@ -70,8 +74,30 @@ wait_mysql() {
     return 1
 }
 
+wait_http_service() {
+    local name="$1"
+    local url="$2"
+    local max_retry="${3:-60}"
+    for _ in $(seq 1 "${max_retry}"); do
+        if curl -fsS "${url}" >/dev/null 2>&1; then
+            echo "[space] ${name} is ready (${url})"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[space] ${name} health check timeout (${url})"
+    return 1
+}
+
 start_mysql() {
-    mysqld --user=mysql --datadir="$MYSQL_DATA_DIR" --socket="$MYSQL_SOCKET" --port="$MYSQL_PORT" --bind-address=127.0.0.1 &
+    mysqld \
+        --user=mysql \
+        --datadir="$MYSQL_DATA_DIR" \
+        --socket="$MYSQL_SOCKET" \
+        --port="$MYSQL_PORT" \
+        --bind-address=127.0.0.1 \
+        --innodb_buffer_pool_size="${MYSQL_INNODB_BUFFER_POOL_SIZE:-128M}" \
+        --max_connections="${MYSQL_MAX_CONNECTIONS:-120}" &
     MYSQL_PID=$!
     if ! wait_mysql; then
         echo "[space] mysql startup failed"
@@ -229,6 +255,18 @@ backup_once() {
         return 0
     fi
 
+    if [ "${BACKUP_MIN_INTERVAL_SEC}" -gt 0 ] && [[ "${reason}" == interval || "${reason}" == log-* ]]; then
+        if [ -f "${BACKUP_LAST_RUN_FILE}" ]; then
+            local now
+            local last
+            now="$(date +%s)"
+            last="$(cat "${BACKUP_LAST_RUN_FILE}" 2>/dev/null || echo 0)"
+            if [[ "${last}" =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "${BACKUP_MIN_INTERVAL_SEC}" ]; then
+                return 0
+            fi
+        fi
+    fi
+
     if ! acquire_backup_lock; then
         echo "[space] backup skipped: lock busy"
         return 0
@@ -240,13 +278,16 @@ backup_once() {
     ts="$(date +%Y%m%d_%H%M%S)"
     mkdir -p "${BACKUP_DIR}"
 
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly > "${BACKUP_DIR}/monopoly_${ts}.sql"
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly | gzip -1 > "${BACKUP_DIR}/monopoly_${ts}.sql.gz"
     if [ $? -ne 0 ]; then rc=1; fi
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user > "${BACKUP_DIR}/fatpaper_user_${ts}.sql"
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user | gzip -1 > "${BACKUP_DIR}/fatpaper_user_${ts}.sql.gz"
     if [ $? -ne 0 ]; then rc=1; fi
 
     prune_backup_dir "${BACKUP_DIR}" "${BACKUP_KEEP_COUNT}"
     sync_backups_to_repo "${reason}" "${ts}" || rc=1
+    if [ "${rc}" -eq 0 ]; then
+        date +%s > "${BACKUP_LAST_RUN_FILE}" || true
+    fi
 
     release_backup_lock
     set -e
@@ -335,10 +376,14 @@ start_log_backup_watcher() {
     LOG_WATCH_PID=$!
 }
 
-echo "[space] starting mysql..."
 mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}"
 chown -R mysql:mysql /run/mysqld "${MYSQL_DATA_DIR}"
 
+echo "[space] starting nginx on :7860..."
+nginx -g "daemon off;" &
+NGINX_PID=$!
+
+echo "[space] starting mysql..."
 if [ ! -d "${MYSQL_DATA_DIR}/mysql" ]; then
     mariadb-install-db --user=mysql --datadir="${MYSQL_DATA_DIR}" --auth-root-authentication-method=normal > /tmp/mariadb-init.log
 fi
@@ -382,17 +427,13 @@ if [ "${TABLE_COUNT:-0}" = "0" ]; then
     fi
 fi
 
-backup_once "startup" || echo "[space] startup backup failed"
-start_interval_backup_loop
-
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
 : > "${APP_LOG_FILE}"
-start_log_backup_watcher
 
 echo "[space] starting user-server..."
 (
     cd /app/fatpaper-user-server
-    node dist/fatpaper-user-server/app.js --omit=dev 2>&1 | sed -u 's/^/[user-server] /'
+    node dist/fatpaper-user-server/app.js 2>&1 | sed -u 's/^/[user-server] /'
 ) | tee -a "${APP_LOG_FILE}" &
 USER_SERVER_PID=$!
 
@@ -403,23 +444,12 @@ echo "[space] starting monopoly-server..."
 ) | tee -a "${APP_LOG_FILE}" &
 MONOPOLY_SERVER_PID=$!
 
-for _ in $(seq 1 90); do
-    if curl -fsS "http://127.0.0.1:83/health" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
+wait_http_service "user-server" "http://127.0.0.1:83/health" 60 || true
+wait_http_service "monopoly-server" "http://127.0.0.1:84/health" 60 || true
 
-for _ in $(seq 1 90); do
-    if curl -fsS "http://127.0.0.1:84/health" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-
-echo "[space] starting nginx on :7860..."
-nginx -g "daemon off;" &
-NGINX_PID=$!
+backup_once "startup" || echo "[space] startup backup failed"
+start_interval_backup_loop
+start_log_backup_watcher
 
 wait -n "${MYSQL_PID}" "${USER_SERVER_PID}" "${MONOPOLY_SERVER_PID}" "${NGINX_PID}"
 exit 1
