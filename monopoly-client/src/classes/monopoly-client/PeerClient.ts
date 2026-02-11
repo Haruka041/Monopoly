@@ -1,11 +1,7 @@
 import { useLoading } from "@/store";
+import { buildIceServers } from "@/utils/webrtc-ice";
 import { __ICE_SERVER_PATH__, __ICE_SERVER_PORT__, __PROTOCOL__ } from "@G/global.config";
 import Peer, { DataConnection } from "peerjs";
-
-const defaultIceServers = [
-	{ urls: "stun:stun.l.google.com:19302" },
-	{ urls: "stun:stun1.l.google.com:19302" },
-];
 
 export class PeerClient {
 	private peer: Peer;
@@ -41,6 +37,7 @@ export class PeerClient {
 	}
 
 	public static async create(host: string, port: number) {
+		const iceServers = buildIceServers();
 		//向服务器和获取自己的peerId
 		const peer = await new Promise<Peer>((resolve, reject) => {
 			const isHTTP = __PROTOCOL__ === "http";
@@ -52,7 +49,7 @@ export class PeerClient {
 							path: `/${__ICE_SERVER_PATH__}`,
 							secure: true,
 							config: {
-								iceServers: defaultIceServers,
+								iceServers,
 							},
 					  }
 			);

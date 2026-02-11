@@ -12,6 +12,11 @@ export USE_PORT="${USE_PORT:-false}"
 export USER_SERVER_PATH="${USER_SERVER_PATH:-user-server}"
 export MONOPOLY_SERVER_PATH="${MONOPOLY_SERVER_PATH:-monopoly-server}"
 export ICE_SERVER_PATH="${ICE_SERVER_PATH:-ice-server}"
+export TURN_URLS="${TURN_URLS:-}"
+export TURN_USERNAME="${TURN_USERNAME:-}"
+export TURN_CREDENTIAL="${TURN_CREDENTIAL:-}"
+export EXTRA_STUN_URLS="${EXTRA_STUN_URLS:-}"
+export ICE_SERVERS_JSON="${ICE_SERVERS_JSON:-}"
 export USER_SERVER_HOST="${USER_SERVER_HOST:-127.0.0.1}"
 export ENABLE_ACCESS_LOG="${ENABLE_ACCESS_LOG:-true}"
 export ENABLE_HEALTH_CHECK_LOG="${ENABLE_HEALTH_CHECK_LOG:-true}"
@@ -52,6 +57,7 @@ BACKUP_LAST_RUN_FILE="${BACKUP_LAST_RUN_FILE:-/tmp/monopoly-backup-last-run}"
 USER_HEALTH_URL="${USER_HEALTH_URL:-http://127.0.0.1:83/health}"
 MONOPOLY_HEALTH_URL="${MONOPOLY_HEALTH_URL:-http://127.0.0.1:84/health}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:7860/}"
+RUNTIME_CONFIG_FILE="${RUNTIME_CONFIG_FILE:-/var/www/monopoly-client/runtime-config.js}"
 
 append_app_log() {
     local line="$1"
@@ -59,6 +65,28 @@ append_app_log() {
     if [ -n "${APP_LOG_FILE:-}" ]; then
         printf '%s\n' "${line}" >> "${APP_LOG_FILE}" 2>/dev/null || true
     fi
+}
+
+write_runtime_ice_config() {
+    local target_file="${RUNTIME_CONFIG_FILE}"
+    mkdir -p "$(dirname "${target_file}")"
+    node - "${target_file}" <<'NODE'
+const fs = require("fs");
+const targetFile = process.argv[2];
+const runtimeConfig = {
+    turnUrls: process.env.TURN_URLS || "",
+    turnUsername: process.env.TURN_USERNAME || "",
+    turnCredential: process.env.TURN_CREDENTIAL || "",
+    extraStunUrls: process.env.EXTRA_STUN_URLS || "",
+    iceServersJson: process.env.ICE_SERVERS_JSON || ""
+};
+
+fs.writeFileSync(
+    targetFile,
+    `window.__MONOPOLY_RUNTIME__ = ${JSON.stringify(runtimeConfig)};\n`,
+    "utf8"
+);
+NODE
 }
 
 cleanup() {
@@ -437,6 +465,7 @@ start_health_check_loop() {
 
 mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}"
 chown -R mysql:mysql /run/mysqld "${MYSQL_DATA_DIR}"
+write_runtime_ice_config || echo "[space] warning: write runtime ICE config failed"
 
 echo "[space] starting nginx on :7860..."
 nginx -g "daemon off;" &

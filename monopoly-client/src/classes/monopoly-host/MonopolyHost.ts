@@ -12,11 +12,7 @@ import { deleteRoom, emitRoomHeart, setRoomStarted } from "@/utils/api/room-rout
 import { asyncMission } from "@/utils/async-mission-queue";
 import { __ICE_SERVER_PATH__, __PROTOCOL__ } from "@G/global.config";
 import { useDeviceStatus, useLoading } from "@/store";
-
-const defaultIceServers = [
-	{ urls: "stun:stun.l.google.com:19302" },
-	{ urls: "stun:stun1.l.google.com:19302" },
-];
+import { buildIceServers } from "@/utils/webrtc-ice";
 
 export class MonopolyHost {
 	private peer: Peer;
@@ -199,6 +195,7 @@ export class MonopolyHost {
 	}
 
 	public static async create(roomId: string, host: string, port: number, heartContinuationTimeMs: number) {
+		const iceServers = buildIceServers();
 		const peer = await new Promise<Peer>((resolve, reject) => {
 			const isHTTP = __PROTOCOL__ === "http";
 			const peer = new Peer(
@@ -209,7 +206,7 @@ export class MonopolyHost {
 							path: `/${__ICE_SERVER_PATH__}`,
 							secure: true,
 							config: {
-								iceServers: defaultIceServers,
+								iceServers,
 							},
 					  }
 			);
