@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onBeforeMount, onBeforeUnmount, reactive, onMounted, nextTick } from "vue";
 import router from "@/router";
-import { __LOGINPAGEURL__, __PROTOCOL__ } from "@G/global.config";
+import { __LOGINPAGEURL__ } from "@G/global.config";
 import { getUserByToken } from "@/utils/api/user";
 import { createLoginIframeOnBody, exitFullScreen, randomString, setTimeOutAsync } from "@/utils";
+import { normalizeExternalUrl } from "@/utils/url";
 import FPMessage from "@/components/utils/fp-message/index";
 import { useUserInfo } from "@/store";
 import { LoginDiceRenderer } from "@/classes/three/LoginDiceRenderer";
@@ -67,7 +68,7 @@ async function getUserInfoToRoomList() {
 					const userInfoStore = useUserInfo();
 					userInfoStore.$patch({ userId, useraccount, username, avatar, color });
 					await setTimeOutAsync(1500);
-					if (loginCodeRenderer) await loginCodeRenderer.showImage(`${__PROTOCOL__}://${avatar}`);
+					if (loginCodeRenderer) await loginCodeRenderer.showImage(normalizeExternalUrl(avatar));
 					await setTimeOutAsync(2000, toRoomList);
 					return;
 				} catch (e: any) {

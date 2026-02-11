@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { adjustColorAuto, adjustColorBrightness, lightenColor } from "@/utils";
-import { __PROTOCOL__ } from "@G/global.config";
+import { normalizeExternalUrl } from "@/utils/url";
 
 const props = defineProps<{ username: string; color: string; avatar: string }>();
 
 const avatarSrc = computed(() => {
-	return props.avatar ? `${__PROTOCOL__}://${props.avatar}` : "";
+	return normalizeExternalUrl(props.avatar);
+});
+const avatarBroken = ref(false);
+const hasAvatar = computed(() => !!avatarSrc.value && !avatarBroken.value);
+
+watch(avatarSrc, () => {
+	avatarBroken.value = false;
 });
 </script>
 
 <template>
 	<div class="user-card">
 		<div class="avatar">
-			<img v-if="avatarSrc" :src="avatarSrc" />
+			<img v-if="hasAvatar" :src="avatarSrc" @error="avatarBroken = true" />
 			<FontAwesomeIcon v-else :style="{ color: color }" icon="gamepad" />
 		</div>
 		<div class="info">

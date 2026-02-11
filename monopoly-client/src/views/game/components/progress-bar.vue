@@ -1,17 +1,51 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useGameInfo, useRoomInfo } from "@/store";
 import { lightenColor } from "@/utils";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { __PROTOCOL__ } from "@G/global.config";
+import { normalizeExternalUrl } from "@/utils/url";
 
 const playerList = computed(() => useGameInfo().playersList);
 const overMoney = computed(() => useRoomInfo().gameSetting.overMoney);
+const brokenAvatarMap = ref<Record<string, boolean>>({});
 
 function getBlockHeight(money: number) {
 	const height = money / overMoney.value;
 	return height < 1 ? (height > 0 ? height * 100 + "%" : "0") : "100%";
 }
+
+function getAvatarSrc(raw: string) {
+	return normalizeExternalUrl(raw);
+}
+
+function hasAvatar(playerId: string, avatarRaw: string) {
+	return !!getAvatarSrc(avatarRaw) && !brokenAvatarMap.value[playerId];
+}
+
+function markAvatarBroken(playerId: string) {
+	brokenAvatarMap.value[playerId] = true;
+}
+
+watch(
+	playerList,
+	(list) => {
+		const next: Record<string, boolean> = { ...brokenAvatarMap.value };
+		const activeIds = new Set<string>();
+		list.forEach((player) => {
+			activeIds.add(player.id);
+			if (next[player.id] === undefined) {
+				next[player.id] = false;
+			}
+		});
+		Object.keys(next).forEach((id) => {
+			if (!activeIds.has(id)) {
+				delete next[id];
+			}
+		});
+		brokenAvatarMap.value = next;
+	},
+	{ immediate: true }
+);
 </script>
 
 <template>
@@ -25,7 +59,11 @@ function getBlockHeight(money: number) {
 		>
 			<div class="avatar-container" :style="{ '--c': lightenColor(player.user.color, 15) }">
 				<div class="avatar">
-					<img v-if="player.user.avatar" :src="`${__PROTOCOL__}://${player.user.avatar}`" />
+					<img
+						v-if="hasAvatar(player.id, player.user.avatar)"
+						:src="getAvatarSrc(player.user.avatar)"
+						@error="markAvatarBroken(player.id)"
+					/>
 					<FontAwesomeIcon v-else :style="{ color: player.user.color }" icon="gamepad" />
 				</div>
 				<div class="money">￥{{ player.money }}</div>

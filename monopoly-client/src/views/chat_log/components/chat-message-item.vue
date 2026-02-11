@@ -1,29 +1,27 @@
 <script setup lang="ts">
 import { ChatMessage } from "@/interfaces/bace";
-import { computed, onMounted, onUpdated } from "vue";
+import { computed, ref, watch } from "vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { __PROTOCOL__ } from "@G/global.config";
+import { normalizeExternalUrl } from "@/utils/url";
 
 const props = defineProps<{ chatMessage: ChatMessage }>();
 const { user, type, content } = props.chatMessage;
 const avatarSrc = computed(() => {
-	return user.avatar ? `${__PROTOCOL__}://${user.avatar}` : "";
+	return normalizeExternalUrl(user.avatar);
 });
+const avatarBroken = ref(false);
+const hasAvatar = computed(() => !!avatarSrc.value && !avatarBroken.value);
 
 const color = user.color;
-onMounted(()=>{
-	console.log("🚀 ~ onMounted ~ onMounted:")
-})
-
-onUpdated(()=>{
-	console.log("🚀 ~ onUpdated ~ onUpdated:")
-})
+watch(avatarSrc, () => {
+	avatarBroken.value = false;
+});
 </script>
 
 <template>
 	<div class="chat_message-item">
 		<div class="avatar">
-			<img v-if="avatarSrc" :src="avatarSrc" />
+			<img v-if="hasAvatar" :src="avatarSrc" @error="avatarBroken = true" />
 			<FontAwesomeIcon v-else :style="{ color: color }" icon="gamepad" />
 		</div>
 		<div class="right-container">

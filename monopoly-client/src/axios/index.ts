@@ -2,7 +2,7 @@ import axios from "axios";
 import FPMessage from "@/components/utils/fp-message";
 
 axios.defaults.headers.common["Authorization"] = (localStorage || window.localStorage).getItem("token");
-axios.defaults.timeout = 15000;
+axios.defaults.timeout = 30000;
 
 //请求拦截器
 axios.interceptors.request.use(

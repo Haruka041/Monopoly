@@ -7,15 +7,17 @@ import { useRoomInfo, useUserInfo } from "@/store";
 import { ChangeRoleOperate } from "@/enums/bace";
 import { useMonopolyClient } from "@/classes/monopoly-client/MonopolyClient";
 import { RolePreviewer } from "@/views/room/utils/RolePreviewer";
-import { __PROTOCOL__ } from "@G/global.config";
+import { normalizeExternalUrl } from "@/utils/url";
 
 const props = defineProps<{ user: UserInRoomInfo | undefined }>();
 
 const user = computed(() => props.user);
 const lightColor = computed(() => (user.value ? lightenColor(user.value.color, 15) : "#ffffff"));
 const avatarSrc = computed(() => {
-	return user.value && (user.value.avatar ? `${__PROTOCOL__}://${user.value.avatar}` : "");
+	return normalizeExternalUrl(user.value?.avatar);
 });
+const avatarBroken = ref(false);
+const hasAvatar = computed(() => !!avatarSrc.value && !avatarBroken.value);
 
 const isMe = computed(() => (user.value ? user.value.userId === useUserInfo().userId : false));
 const isRoomOwner = computed(() => (user.value ? user.value.userId === useRoomInfo().ownerId : false));
@@ -60,8 +62,13 @@ onMounted(() => {
 						rolePreviewer = new RolePreviewer(canvasEl);
 					}
 					if (newUser.role.id !== (oldUser?.role.id || "")) {
-						rolePreviewer &&
-							rolePreviewer.loadRole(`${__PROTOCOL__}://${newUser.role.baseUrl}/`, newUser.role.fileName);
+						const roleBaseUrl = normalizeExternalUrl(newUser.role.baseUrl);
+						if (rolePreviewer && roleBaseUrl) {
+							rolePreviewer.loadRole(
+								roleBaseUrl.endsWith("/") ? roleBaseUrl : `${roleBaseUrl}/`,
+								newUser.role.fileName
+							);
+						}
 					}
 				} else {
 					rolePreviewer && rolePreviewer.destroy();
@@ -71,6 +78,10 @@ onMounted(() => {
 			{ immediate: true, deep: true }
 		);
 	});
+});
+
+watch(avatarSrc, () => {
+	avatarBroken.value = false;
 });
 
 onBeforeUnmount(() => {
@@ -105,7 +116,7 @@ onBeforeUnmount(() => {
 
 		<div v-if="user && user.username" class="user-info">
 			<div class="avatar" :style="{ 'background-color': user.color }">
-				<img v-if="avatarSrc" :src="avatarSrc" />
+				<img v-if="hasAvatar" :src="avatarSrc" @error="avatarBroken = true" />
 				<FontAwesomeIcon v-else :style="{ color: '#ffffff' }" icon="gamepad" />
 			</div>
 

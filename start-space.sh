@@ -34,6 +34,7 @@ export BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-100}"
 export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-1}"
 export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
 export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-60}"
+export BACKUP_HEARTBEAT_INTERVAL_SEC="${BACKUP_HEARTBEAT_INTERVAL_SEC:-60}"
 export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
@@ -43,13 +44,16 @@ export BACKUP_HF_USERNAME="${BACKUP_HF_USERNAME:-${HF_USERNAME:-token}}"
 if [ -d /data ]; then
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/data/mysql}"
     BACKUP_DIR="${BACKUP_DIR:-/data/backups}"
+    AVATAR_STORE_DIR="${AVATAR_STORE_DIR:-/data/avatar-store}"
 else
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/var/lib/mysql}"
     BACKUP_DIR="${BACKUP_DIR:-/var/backups/monopoly}"
+    AVATAR_STORE_DIR="${AVATAR_STORE_DIR:-/var/lib/monopoly-avatar-store}"
 fi
 
 BACKUP_REPO_DIR="${BACKUP_REPO_DIR:-/tmp/hf-backup-repo}"
 BACKUP_REPO_DATA_DIR="${BACKUP_REPO_DATA_DIR:-${BACKUP_REPO_DIR}/db}"
+BACKUP_REPO_AVATAR_DIR="${BACKUP_REPO_AVATAR_DIR:-${BACKUP_REPO_DIR}/assets/avatars}"
 BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
@@ -58,6 +62,7 @@ USER_HEALTH_URL="${USER_HEALTH_URL:-http://127.0.0.1:83/health}"
 MONOPOLY_HEALTH_URL="${MONOPOLY_HEALTH_URL:-http://127.0.0.1:84/health}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:7860/}"
 RUNTIME_CONFIG_FILE="${RUNTIME_CONFIG_FILE:-/var/www/monopoly-client/runtime-config.js}"
+USER_SERVER_AVATAR_DIR="${USER_SERVER_AVATAR_DIR:-/app/fatpaper-user-server/public/fatpaper/user/avatar}"
 
 append_app_log() {
     local line="$1"
@@ -89,6 +94,29 @@ fs.writeFileSync(
 NODE
 }
 
+safe_parse_positive_int() {
+    local val="$1"
+    local fallback="$2"
+    if ! [[ "${val}" =~ ^[0-9]+$ ]]; then
+        echo "${fallback}"
+        return
+    fi
+    echo "${val}"
+}
+
+prepare_avatar_storage() {
+    mkdir -p "${AVATAR_STORE_DIR}"
+    mkdir -p "$(dirname "${USER_SERVER_AVATAR_DIR}")"
+
+    if [ -e "${USER_SERVER_AVATAR_DIR}" ] && [ ! -L "${USER_SERVER_AVATAR_DIR}" ]; then
+        cp -a "${USER_SERVER_AVATAR_DIR}/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
+        rm -rf "${USER_SERVER_AVATAR_DIR}"
+    fi
+
+    ln -sfn "${AVATAR_STORE_DIR}" "${USER_SERVER_AVATAR_DIR}"
+    append_app_log "[space] avatar storage linked: ${USER_SERVER_AVATAR_DIR} -> ${AVATAR_STORE_DIR}"
+}
+
 cleanup() {
     echo "[space] shutting down services..."
     if [ "${ENABLE_AUTO_BACKUP}" = "true" ]; then
@@ -102,6 +130,9 @@ cleanup() {
     fi
     if [ -n "${HEALTH_CHECK_PID:-}" ]; then
         kill "${HEALTH_CHECK_PID}" >/dev/null 2>&1 || true
+    fi
+    if [ -n "${BACKUP_HEARTBEAT_PID:-}" ]; then
+        kill "${BACKUP_HEARTBEAT_PID}" >/dev/null 2>&1 || true
     fi
     pkill -f "node dist/fatpaper-user-server/app.js" || true
     pkill -f "node dist/monopoly-server/app.js" || true
@@ -226,7 +257,7 @@ ensure_backup_repo() {
 
     git -C "${BACKUP_REPO_DIR}" config user.email "space-backup@local" >/dev/null 2>&1 || true
     git -C "${BACKUP_REPO_DIR}" config user.name "space-backup-bot" >/dev/null 2>&1 || true
-    mkdir -p "${BACKUP_REPO_DATA_DIR}"
+    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}"
     return 0
 }
 
@@ -251,37 +282,45 @@ sync_backups_from_repo() {
     if ! ensure_backup_repo; then
         return 0
     fi
+    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}" "${AVATAR_STORE_DIR}"
     cp -f "${BACKUP_REPO_DATA_DIR}"/monopoly_*.sql "${BACKUP_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql "${BACKUP_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_REPO_DATA_DIR}"/monopoly_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
+    cp -af "${BACKUP_REPO_AVATAR_DIR}/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
     local mono_count
     local user_count
+    local avatar_count
     mono_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "monopoly_*.sql" -o -name "monopoly_*.sql.gz" \) | wc -l | tr -d ' ')"
     user_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "fatpaper_user_*.sql" -o -name "fatpaper_user_*.sql.gz" \) | wc -l | tr -d ' ')"
-    append_app_log "[space] backup repo sync finished: monopoly=${mono_count}, fatpaper_user=${user_count}"
+    avatar_count="$(find "${AVATAR_STORE_DIR}" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+    append_app_log "[space] backup repo sync finished: monopoly=${mono_count}, fatpaper_user=${user_count}, avatars=${avatar_count}"
 }
 
 sync_backups_to_repo() {
     local reason="$1"
     local ts="$2"
     if ! ensure_backup_repo; then
+        append_app_log "[space] backup repo sync skipped (${reason}): repo disabled"
         return 0
     fi
 
+    mkdir -p "${BACKUP_REPO_DATA_DIR}" "${BACKUP_REPO_AVATAR_DIR}"
     cp -f "${BACKUP_DIR}"/monopoly_*.sql "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_DIR}"/fatpaper_user_*.sql "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_DIR}"/monopoly_*.sql.gz "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_DIR}"/fatpaper_user_*.sql.gz "${BACKUP_REPO_DATA_DIR}"/ 2>/dev/null || true
+    cp -af "${AVATAR_STORE_DIR}/." "${BACKUP_REPO_AVATAR_DIR}/" 2>/dev/null || true
     prune_backup_dir "${BACKUP_REPO_DATA_DIR}" "${BACKUP_KEEP_COUNT}"
 
-    git -C "${BACKUP_REPO_DIR}" add db >/dev/null 2>&1 || true
+    git -C "${BACKUP_REPO_DIR}" add db assets/avatars >/dev/null 2>&1 || true
     if git -C "${BACKUP_REPO_DIR}" diff --cached --quiet; then
+        append_app_log "[space] backup repo unchanged (${reason}), skip push"
         return 0
     fi
     git -C "${BACKUP_REPO_DIR}" commit -m "backup: ${reason} ${ts}" >/dev/null 2>&1 || true
     git -C "${BACKUP_REPO_DIR}" push origin "${BACKUP_BRANCH}" >/dev/null 2>&1 || {
-        echo "[space] backup repo push failed"
+        append_app_log "[space] backup repo push failed (${reason}): please verify BACKUP_REPO and HF token write permission"
         return 1
     }
 }
@@ -313,6 +352,7 @@ backup_once() {
             now="$(date +%s)"
             last="$(cat "${BACKUP_LAST_RUN_FILE}" 2>/dev/null || echo 0)"
             if [[ "${last}" =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "${BACKUP_MIN_INTERVAL_SEC}" ]; then
+                append_app_log "[space] backup skipped (${reason}): min-interval ${BACKUP_MIN_INTERVAL_SEC}s"
                 return 0
             fi
         fi
@@ -328,6 +368,8 @@ backup_once() {
     local ts
     ts="$(date +%Y%m%d_%H%M%S)"
     mkdir -p "${BACKUP_DIR}"
+    mkdir -p "${AVATAR_STORE_DIR}"
+    append_app_log "[space] backup started (${reason}) at ${ts}"
 
     mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly | gzip -1 > "${BACKUP_DIR}/monopoly_${ts}.sql.gz"
     if [ $? -ne 0 ]; then rc=1; fi
@@ -430,6 +472,34 @@ start_log_backup_watcher() {
     LOG_WATCH_PID=$!
 }
 
+start_backup_heartbeat_loop() {
+    if [ "${ENABLE_AUTO_BACKUP}" != "true" ]; then
+        return
+    fi
+    BACKUP_HEARTBEAT_INTERVAL_SEC="$(safe_parse_positive_int "${BACKUP_HEARTBEAT_INTERVAL_SEC}" "60")"
+    if [ "${BACKUP_HEARTBEAT_INTERVAL_SEC}" -lt 20 ]; then
+        BACKUP_HEARTBEAT_INTERVAL_SEC=20
+    fi
+    append_app_log "[space] backup-heartbeat enabled: every ${BACKUP_HEARTBEAT_INTERVAL_SEC}s"
+    (
+        while true; do
+            local last_backup_epoch=0
+            local last_backup_human="never"
+            local now_epoch
+            now_epoch="$(date +%s)"
+            if [ -f "${BACKUP_LAST_RUN_FILE}" ]; then
+                last_backup_epoch="$(cat "${BACKUP_LAST_RUN_FILE}" 2>/dev/null || echo 0)"
+            fi
+            if [[ "${last_backup_epoch}" =~ ^[0-9]+$ ]] && [ "${last_backup_epoch}" -gt 0 ]; then
+                last_backup_human="$(date -d "@${last_backup_epoch}" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "${last_backup_epoch}")"
+            fi
+            append_app_log "[backup-heartbeat] auto=${ENABLE_AUTO_BACKUP}, interval=${BACKUP_INTERVAL_MIN}m, trigger=${BACKUP_TRIGGER_LINES} lines, last=${last_backup_human}, now=${now_epoch}"
+            sleep "${BACKUP_HEARTBEAT_INTERVAL_SEC}"
+        done
+    ) &
+    BACKUP_HEARTBEAT_PID=$!
+}
+
 health_probe_once() {
     local name="$1"
     local url="$2"
@@ -468,9 +538,10 @@ start_health_check_loop() {
     HEALTH_CHECK_PID=$!
 }
 
-mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}"
+mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}"
 chown -R mysql:mysql /run/mysqld "${MYSQL_DATA_DIR}"
 write_runtime_ice_config || echo "[space] warning: write runtime ICE config failed"
+prepare_avatar_storage
 
 echo "[space] starting nginx on :7860..."
 nginx -g "daemon off;" &
@@ -525,6 +596,7 @@ fi
 
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
 : > "${APP_LOG_FILE}"
+append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
 
 echo "[space] starting user-server..."
 (
@@ -546,6 +618,7 @@ wait_http_service "monopoly-server" "http://127.0.0.1:84/health" 60 || true
 backup_once "startup" || echo "[space] startup backup failed"
 start_interval_backup_loop
 start_log_backup_watcher
+start_backup_heartbeat_loop
 start_health_check_loop
 
 wait -n "${MYSQL_PID}" "${USER_SERVER_PID}" "${MONOPOLY_SERVER_PID}" "${NGINX_PID}"

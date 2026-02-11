@@ -3,8 +3,8 @@ import { PlayerInfo } from "@/interfaces/game";
 import { PropType, computed, ref, watch } from "vue";
 import { useGameInfo } from "@/store/index";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { __PROTOCOL__ } from "@G/global.config";
 import gsap from "gsap";
+import { normalizeExternalUrl } from "@/utils/url";
 
 // const props = defineProps({
 // 	player: { type: Object as PropType<PlayerInfo>, default: {} },
@@ -18,7 +18,13 @@ const displayNumber = ref(0);
 const _userInfo = computed(() => props.player.user);
 const _isBankrupted = computed(() => props.player.isBankrupted);
 const avatarSrc = computed(() => {
-	return _userInfo.value.avatar ? `${__PROTOCOL__}://${_userInfo.value.avatar}` : "";
+	return normalizeExternalUrl(_userInfo.value.avatar);
+});
+const avatarBroken = ref(false);
+const hasAvatar = computed(() => !!avatarSrc.value && !avatarBroken.value);
+
+watch(avatarSrc, () => {
+	avatarBroken.value = false;
 });
 
 watch(
@@ -51,7 +57,7 @@ watch(
 			<div v-if="player.isOffline" class="disconnect-marker">
 				<FontAwesomeIcon icon="link-slash" />
 			</div>
-			<img v-if="avatarSrc" :src="avatarSrc" />
+			<img v-if="hasAvatar" :src="avatarSrc" @error="avatarBroken = true" />
 			<FontAwesomeIcon v-else :style="{ color: _userInfo.color }" icon="gamepad" />
 		</div>
 

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { PlayerInfo } from "@/interfaces/game";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { __PROTOCOL__ } from "@G/global.config";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import ChanceCard from "./chance-card.vue";
 import BuffItem from "./buff-item.vue";
 import { useGameInfo, useRoomInfo } from "@/store";
 import { PropertyLevel } from "@/utils/var";
+import { normalizeExternalUrl } from "@/utils/url";
 
 const props = defineProps<{
 	player: PlayerInfo;
@@ -19,11 +19,17 @@ const playersPropertyies = computed(() => {
 });
 
 const avatarSrc = computed(() => {
-	return props.player.user.avatar ? `${__PROTOCOL__}://${props.player.user.avatar}` : "";
+	return normalizeExternalUrl(props.player.user.avatar);
 });
+const avatarBroken = ref(false);
+const hasAvatar = computed(() => !!avatarSrc.value && !avatarBroken.value);
 
 const chanceCardVisible = computed(() => {
 	return useRoomInfo().gameSetting.chanceCardVisible;
+});
+
+watch(avatarSrc, () => {
+	avatarBroken.value = false;
 });
 </script>
 
@@ -33,7 +39,7 @@ const chanceCardVisible = computed(() => {
 			<div class="user-properties">
 				<div class="user">
 					<div class="avatar">
-						<img v-if="avatarSrc" :src="avatarSrc" />
+						<img v-if="hasAvatar" :src="avatarSrc" @error="avatarBroken = true" />
 						<FontAwesomeIcon v-else :style="{ color: player.user.color }" icon="gamepad" />
 					</div>
 					<div class="text" :style="{ color: player.user.color }">

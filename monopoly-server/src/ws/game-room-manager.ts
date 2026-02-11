@@ -13,6 +13,7 @@ import { GameProcess } from "../game-engine/GameProcess";
 type WsClient = WebSocket & {
 	__roomId?: string;
 	__userId?: string;
+	__isAlive?: boolean;
 };
 
 type RoomUserSession = UserInRoomInfo & {
@@ -673,13 +674,42 @@ export function getGameRoomManager() {
 
 export function attachGameWsGateway(server: import("http").Server) {
 	const roomManager = getGameRoomManager();
-	const wss = new WebSocketServer({ noServer: true });
+	const wss = new WebSocketServer({
+		noServer: true,
+		perMessageDeflate: false,
+		maxPayload: 1024 * 1024,
+	});
+
+	const heartbeatTimer = setInterval(() => {
+		wss.clients.forEach((client) => {
+			const ws = client as WsClient;
+			if (ws.__isAlive === false) {
+				try {
+					ws.terminate();
+				} catch {}
+				return;
+			}
+			ws.__isAlive = false;
+			try {
+				ws.ping();
+			} catch {
+				try {
+					ws.terminate();
+				} catch {}
+			}
+		});
+	}, 30000);
+
+	wss.on("close", () => {
+		clearInterval(heartbeatTimer);
+	});
 
 	server.on("upgrade", (req: IncomingMessage, socket, head) => {
 		const requestUrl = req.url || "";
 		const parsed = new URL(requestUrl, "http://localhost");
 		const pathname = parsed.pathname;
 		if (!pathname.endsWith(GAME_WS_PATH)) {
+			socket.destroy();
 			return;
 		}
 
@@ -690,12 +720,17 @@ export function attachGameWsGateway(server: import("http").Server) {
 
 	wss.on("connection", (rawWs, req) => {
 		const ws = rawWs as WsClient;
+		ws.__isAlive = true;
 		const parsed = new URL(req.url || "", "http://localhost");
 		const queryRoomId = parsed.searchParams.get("roomId") || "";
 
 		if (queryRoomId) {
 			ws.__roomId = queryRoomId;
 		}
+
+		ws.on("pong", () => {
+			ws.__isAlive = true;
+		});
 
 		ws.on("message", async (payload: RawData) => {
 			const msg = parseJsonSafe(payload.toString());
@@ -764,12 +799,14 @@ export function attachGameWsGateway(server: import("http").Server) {
 		});
 
 		ws.on("close", () => {
+			ws.__isAlive = false;
 			if (ws.__roomId && ws.__userId) {
 				roomManager.handleDisconnect(ws.__roomId, ws.__userId);
 			}
 		});
 
 		ws.on("error", () => {
+			ws.__isAlive = false;
 			if (ws.__roomId && ws.__userId) {
 				roomManager.handleDisconnect(ws.__roomId, ws.__userId);
 			}

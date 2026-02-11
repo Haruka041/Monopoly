@@ -54,12 +54,65 @@ export class MonopolyClient {
 	private static instance: MonopolyClient | null;
 
 	private sendHeartTime = 0;
+	private readonly wsMaxConnectAttempts = 4;
+	private readonly wsBaseConnectTimeoutMs = 10000;
 
 	private getErrorMessage(error: any, fallback = "服务器连接失败") {
 		if (typeof error === "string") return error;
 		if (error?.message) return error.message;
 		if (error?.response?.data?.msg) return error.response.data.msg;
 		return fallback;
+	}
+
+	private sleep(ms: number) {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	private openSocket(wsUrl: string, timeoutMs: number) {
+		return new Promise<WebSocket>((resolve, reject) => {
+			const ws = new WebSocket(wsUrl);
+			let settled = false;
+
+			const doneResolve = () => {
+				if (settled) return;
+				settled = true;
+				window.clearTimeout(timeout);
+				resolve(ws);
+			};
+			const doneReject = (error: Error) => {
+				if (settled) return;
+				settled = true;
+				window.clearTimeout(timeout);
+				try {
+					ws.close();
+				} catch {}
+				reject(error);
+			};
+
+			const timeout = window.setTimeout(() => {
+				doneReject(new Error("连接房间超时，请稍后重试"));
+			}, timeoutMs);
+
+			ws.onopen = () => doneResolve();
+			ws.onerror = () => doneReject(new Error("连接房间失败"));
+			ws.onclose = () => doneReject(new Error("连接被服务器关闭"));
+		});
+	}
+
+	private async openSocketWithRetry(wsUrl: string) {
+		let lastError: Error = new Error("连接房间失败");
+		for (let attempt = 1; attempt <= this.wsMaxConnectAttempts; attempt++) {
+			try {
+				const timeoutMs = this.wsBaseConnectTimeoutMs + (attempt - 1) * 3000;
+				return await this.openSocket(wsUrl, timeoutMs);
+			} catch (error: any) {
+				lastError = error instanceof Error ? error : new Error(this.getErrorMessage(error));
+				if (attempt < this.wsMaxConnectAttempts) {
+					await this.sleep(500 * attempt);
+				}
+			}
+		}
+		throw lastError;
 	}
 
 	public static getInstance(): MonopolyClient;
@@ -102,24 +155,7 @@ export class MonopolyClient {
 			const wsPath = this.socketPath.startsWith("/") ? this.socketPath : `/${this.socketPath}`;
 			const wsUrl = `${wsProtocol}://${window.location.host}${wsPath}?roomId=${encodeURIComponent(roomId)}`;
 
-			const socket = await new Promise<WebSocket>((resolve, reject) => {
-				const ws = new WebSocket(wsUrl);
-				const timeout = window.setTimeout(() => {
-					try {
-						ws.close();
-					} catch {}
-					reject(new Error("连接房间超时，请稍后重试"));
-				}, 12000);
-
-				ws.onopen = () => {
-					window.clearTimeout(timeout);
-					resolve(ws);
-				};
-				ws.onerror = () => {
-					window.clearTimeout(timeout);
-					reject(new Error("连接房间失败"));
-				};
-			});
+			const socket = await this.openSocketWithRetry(wsUrl);
 
 			this.socket = socket;
 			this.manualClose = false;
@@ -137,6 +173,11 @@ export class MonopolyClient {
 				message: "房间连接成功🤗",
 			});
 			this.isOnline = true;
+
+			this.intervalList.forEach((i) => {
+				clearInterval(i);
+			});
+			this.intervalList = [];
 
 			this.intervalList.push(
 				setInterval(() => {
