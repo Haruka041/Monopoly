@@ -31,9 +31,9 @@ export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$MYSQL_PASSWORD}"
 
 export ENABLE_AUTO_BACKUP="${ENABLE_AUTO_BACKUP:-true}"
 export BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-100}"
-export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-0}"
+export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-1}"
 export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
-export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-300}"
+export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-60}"
 export BACKUP_REPO="${BACKUP_REPO:-}"
 export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
@@ -255,6 +255,11 @@ sync_backups_from_repo() {
     cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql "${BACKUP_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_REPO_DATA_DIR}"/monopoly_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
     cp -f "${BACKUP_REPO_DATA_DIR}"/fatpaper_user_*.sql.gz "${BACKUP_DIR}"/ 2>/dev/null || true
+    local mono_count
+    local user_count
+    mono_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "monopoly_*.sql" -o -name "monopoly_*.sql.gz" \) | wc -l | tr -d ' ')"
+    user_count="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \( -name "fatpaper_user_*.sql" -o -name "fatpaper_user_*.sql.gz" \) | wc -l | tr -d ' ')"
+    append_app_log "[space] backup repo sync finished: monopoly=${mono_count}, fatpaper_user=${user_count}"
 }
 
 sync_backups_to_repo() {
@@ -503,8 +508,11 @@ mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -e "CREATE
 mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -e "CREATE DATABASE IF NOT EXISTS fatpaper_user CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 if is_repo_backup_enabled; then
+    append_app_log "[space] backup repo enabled: type=${BACKUP_REPO_TYPE}, repo=${BACKUP_REPO}, branch=${BACKUP_BRANCH}"
     echo "[space] syncing backups from HF repo..."
     sync_backups_from_repo || echo "[space] backup repo sync failed"
+else
+    append_app_log "[space] backup repo disabled: missing BACKUP_REPO or HF token"
 fi
 
 TABLE_COUNT="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='monopoly' AND table_name='map';")"

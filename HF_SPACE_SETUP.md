@@ -40,7 +40,7 @@
 - 建议在 Space 开启 **Persistent Storage**（`/data` 路径）。
 - 已内置自动备份，默认开启；备份文件会写到 `/data/backups`（无持久盘时是临时目录）。
 - 启动时会尝试从 HF 备份仓库拉取并恢复最近备份。
-- 默认每累计 `100` 行应用日志触发一次自动备份，并自动清理旧备份（默认保留 `100` 份）。
+- 默认每累计 `100` 行应用日志触发一次自动备份，同时每 `1` 分钟做一次定时备份（最小间隔 `60` 秒），并自动清理旧备份（默认保留 `100` 份）。
 
 可选 Variables：
 
@@ -49,7 +49,8 @@
 - `ENABLE_AUTO_BACKUP`（默认 `true`）
 - `BACKUP_KEEP_COUNT`（默认 `100`）
 - `BACKUP_TRIGGER_LINES`（默认 `100`）
-- `BACKUP_INTERVAL_MIN`（默认 `0`，可选；>0 时按分钟额外定时备份）
+- `BACKUP_INTERVAL_MIN`（默认 `1`，可选；>0 时按分钟额外定时备份）
+- `BACKUP_MIN_INTERVAL_SEC`（默认 `60`；日志触发与定时触发的最小备份间隔）
 - `ENABLE_ACCESS_LOG`（默认 `true`；开启后会输出每个 API 请求日志，便于排查并驱动日志行触发备份）
 - `BACKUP_REPO`（示例：`Haruka041/monopoly-backup`）
 - `BACKUP_REPO_TYPE`（`dataset`/`space`/`model`，默认 `dataset`）
