@@ -21,7 +21,12 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
 
-RUN apt-get update && apt-get install -y --no-install-recommends nginx mariadb-server curl ca-certificates git zip unzip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx mariadb-server curl ca-certificates git zip unzip \
+    python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --disable-pip-version-check huggingface_hub
 
 COPY --from=source /app /app
 

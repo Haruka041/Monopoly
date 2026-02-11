@@ -42,6 +42,18 @@ export BACKUP_REPO_TYPE="${BACKUP_REPO_TYPE:-dataset}"
 export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
 export BACKUP_HF_TOKEN="${BACKUP_HF_TOKEN:-${HF_TOKEN:-}}"
 export BACKUP_HF_USERNAME="${BACKUP_HF_USERNAME:-${HF_USERNAME:-__token__}}"
+export BACKUP_USE_HF_API="${BACKUP_USE_HF_API:-}"
+
+if [ -z "${BACKUP_USE_HF_API}" ]; then
+    case "${BACKUP_REPO_TYPE}" in
+        dataset|datasets)
+            export BACKUP_USE_HF_API="true"
+            ;;
+        *)
+            export BACKUP_USE_HF_API="false"
+            ;;
+    esac
+fi
 
 if [ -d /data ]; then
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/data/mysql}"
@@ -213,6 +225,24 @@ is_repo_backup_enabled() {
     return 0
 }
 
+is_hf_api_backup_mode() {
+    local mode="${BACKUP_USE_HF_API}"
+    if [ -z "${mode}" ]; then
+        case "${BACKUP_REPO_TYPE}" in
+            dataset|datasets)
+                mode="true"
+                ;;
+            *)
+                mode="false"
+                ;;
+        esac
+    fi
+    if [ "${mode}" = "true" ]; then
+        return 0
+    fi
+    return 1
+}
+
 mask_backup_secret() {
     local text="${1:-}"
     local masked="${text}"
@@ -220,6 +250,86 @@ mask_backup_secret() {
         masked="${masked//${BACKUP_HF_TOKEN}/***HF_TOKEN***}"
     fi
     printf '%s' "${masked}"
+}
+
+hf_api_download_backup() {
+    if ! is_repo_backup_enabled; then
+        return 1
+    fi
+    mkdir -p "${BACKUP_DIR}"
+    if ! command -v python3 >/dev/null 2>&1; then
+        append_app_log "[space] hf api download failed: python3 not available"
+        return 1
+    fi
+    if ! python3 - "${BACKUP_REPO}" "${BACKUP_ARCHIVE_NAME}" "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" <<'PY'
+import os, sys, shutil
+repo = sys.argv[1]
+filename = sys.argv[2]
+dest = sys.argv[3]
+token = os.environ.get("BACKUP_HF_TOKEN") or os.environ.get("HF_TOKEN") or ""
+try:
+    from huggingface_hub import hf_hub_download
+except Exception as e:
+    print(f"[space] hf api download failed: huggingface_hub missing ({e})")
+    sys.exit(1)
+try:
+    path = hf_hub_download(repo_id=repo, repo_type="dataset", filename=filename, token=token)
+    shutil.copy(path, dest)
+except Exception as e:
+    print(f"[space] hf api download failed: {e}")
+    sys.exit(1)
+PY
+    then
+        return 1
+    fi
+    local archive_size
+    archive_size="$(du -h "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" 2>/dev/null | awk '{print $1}')"
+    append_app_log "[space] backup repo sync finished (api): ${BACKUP_ARCHIVE_NAME} (${archive_size})"
+    return 0
+}
+
+hf_api_upload_backup() {
+    if ! is_repo_backup_enabled; then
+        return 1
+    fi
+    if [ ! -f "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" ]; then
+        append_app_log "[space] hf api upload skipped: ${BACKUP_ARCHIVE_NAME} missing"
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        append_app_log "[space] hf api upload failed: python3 not available"
+        return 1
+    fi
+    if ! python3 - "${BACKUP_REPO}" "${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}" "${BACKUP_ARCHIVE_NAME}" <<'PY'
+import os, sys
+repo = sys.argv[1]
+local_path = sys.argv[2]
+path_in_repo = sys.argv[3]
+token = os.environ.get("BACKUP_HF_TOKEN") or os.environ.get("HF_TOKEN") or ""
+try:
+    from huggingface_hub import HfApi
+except Exception as e:
+    print(f"[space] hf api upload failed: huggingface_hub missing ({e})")
+    sys.exit(1)
+try:
+    api = HfApi()
+    api.upload_file(
+        path_or_fileobj=local_path,
+        path_in_repo=path_in_repo,
+        repo_id=repo,
+        repo_type="dataset",
+        token=token,
+        commit_message="Automated backup (api)",
+    )
+except Exception as e:
+    print(f"[space] hf api upload failed: {e}")
+    sys.exit(1)
+PY
+    then
+        return 1
+    fi
+    append_app_log "[space] backup repo push completed (api): ${BACKUP_ARCHIVE_NAME}"
+    return 0
 }
 
 prepare_backup_git_auth() {
@@ -303,7 +413,8 @@ ensure_backup_repo() {
         git -C "${BACKUP_REPO_DIR}" remote set-url origin "${remote_url}" >/dev/null 2>&1 || true
         run_git_hf -C "${BACKUP_REPO_DIR}" fetch origin "${BACKUP_BRANCH}" || true
         git -C "${BACKUP_REPO_DIR}" checkout "${BACKUP_BRANCH}" >/dev/null 2>&1 || git -C "${BACKUP_REPO_DIR}" checkout -b "${BACKUP_BRANCH}" >/dev/null 2>&1 || true
-        run_git_hf -C "${BACKUP_REPO_DIR}" pull --rebase origin "${BACKUP_BRANCH}" || true
+        git -C "${BACKUP_REPO_DIR}" reset --hard "origin/${BACKUP_BRANCH}" >/dev/null 2>&1 || true
+        git -C "${BACKUP_REPO_DIR}" clean -fdx >/dev/null 2>&1 || true
     fi
 
     git -C "${BACKUP_REPO_DIR}" config user.email "space-backup@local" >/dev/null 2>&1 || true
@@ -312,6 +423,11 @@ ensure_backup_repo() {
 }
 
 sync_backups_from_repo() {
+    if is_hf_api_backup_mode; then
+        hf_api_download_backup || append_app_log "[space] backup repo sync failed (api)"
+        return 0
+    fi
+
     if ! ensure_backup_repo; then
         return 0
     fi
@@ -331,6 +447,14 @@ sync_backups_from_repo() {
 sync_backups_to_repo() {
     local reason="$1"
     local ts="$2"
+    if is_hf_api_backup_mode; then
+        hf_api_upload_backup || {
+            append_app_log "[space] backup repo push failed (api-${reason})"
+            return 1
+        }
+        return 0
+    fi
+
     if ! ensure_backup_repo; then
         append_app_log "[space] backup repo sync skipped (${reason}): repo disabled"
         return 0
@@ -776,7 +900,7 @@ fi
 
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
 touch "${APP_LOG_FILE}"
-append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, restoreOnStartup=${RESTORE_BACKUP_ON_STARTUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s, backupEventFile=${BACKUP_EVENT_FILE}"
+append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, restoreOnStartup=${RESTORE_BACKUP_ON_STARTUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s, backupEventFile=${BACKUP_EVENT_FILE}, backupApi=${BACKUP_USE_HF_API}"
 
 echo "[space] starting user-server..."
 (
