@@ -42,6 +42,8 @@ export const userLogin = async (useraccount: string, password: string, privateKe
             throw new Error("密码错误");
         }
     } else {
+        const totalUsers = await userRepository.count().catch(() => -1);
+        console.warn(`[user-login] account not found: useraccount=${useraccount}, totalUsers=${totalUsers}`);
         throw new Error("不存在的账号");
     }
 };

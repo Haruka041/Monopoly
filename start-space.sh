@@ -316,19 +316,32 @@ build_backup_archive() {
     local work_dir="${BACKUP_WORK_DIR}"
     local output_file="${BACKUP_DIR}/${BACKUP_ARCHIVE_NAME}"
     local metadata_file="${work_dir}/meta.json"
+    local mono_count="NA"
+    local users_count="NA"
+    local mono_sql_file="${work_dir}/db/monopoly.sql"
+    local user_sql_file="${work_dir}/db/fatpaper_user.sql"
 
     rm -rf "${work_dir}"
     mkdir -p "${work_dir}/db" "${work_dir}/assets/avatars" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}"
 
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly | gzip -1 > "${work_dir}/db/monopoly.sql.gz" || return 1
-    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user | gzip -1 > "${work_dir}/db/fatpaper_user.sql.gz" || return 1
+    mono_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM monopoly.map;" 2>/dev/null || echo "NA")"
+    users_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM fatpaper_user.\`user\`;" 2>/dev/null || echo "NA")"
+
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick monopoly > "${mono_sql_file}" || return 1
+    gzip -1f "${mono_sql_file}" || return 1
+
+    mysqldump -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" --single-transaction --quick fatpaper_user > "${user_sql_file}" || return 1
+    gzip -1f "${user_sql_file}" || return 1
+
     cp -af "${AVATAR_STORE_DIR}/." "${work_dir}/assets/avatars/" 2>/dev/null || true
 
     cat > "${metadata_file}" <<EOF
 {
   "timestamp": "${ts}",
   "reason": "${reason}",
-  "format": "monopoly-backup-zip-v1"
+  "format": "monopoly-backup-zip-v1",
+  "usersCount": "${users_count}",
+  "mapsCount": "${mono_count}"
 }
 EOF
 
@@ -409,10 +422,27 @@ backup_once() {
 restore_sql_into_db() {
     local db_name="$1"
     local dump_file="$2"
+    local tmp_restore_dir="${BACKUP_RESTORE_DIR}/tmp"
+    local tmp_sql_file=""
     if [[ "${dump_file}" == *.gz ]]; then
-        gunzip -c "${dump_file}" | mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" "${db_name}"
+        mkdir -p "${tmp_restore_dir}"
+        tmp_sql_file="$(mktemp "${tmp_restore_dir}/${db_name}.XXXXXX.sql")"
+        if ! gunzip -c "${dump_file}" > "${tmp_sql_file}"; then
+            append_app_log "[space] restore failed (${db_name}): invalid gzip ${dump_file}"
+            rm -f "${tmp_sql_file}" >/dev/null 2>&1 || true
+            return 1
+        fi
+        if ! mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" "${db_name}" < "${tmp_sql_file}"; then
+            append_app_log "[space] restore failed (${db_name}): mysql import error from ${dump_file}"
+            rm -f "${tmp_sql_file}" >/dev/null 2>&1 || true
+            return 1
+        fi
+        rm -f "${tmp_sql_file}" >/dev/null 2>&1 || true
     else
-        mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" "${db_name}" < "${dump_file}"
+        if ! mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" "${db_name}" < "${dump_file}"; then
+            append_app_log "[space] restore failed (${db_name}): mysql import error from ${dump_file}"
+            return 1
+        fi
     fi
 }
 
