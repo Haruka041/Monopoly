@@ -19,7 +19,10 @@ const routes = [
 ];
 
 
-const router = createRouter({history: import.meta.env.PROD ? createWebHistory() : createWebHashHistory(), routes});
+const router = createRouter({
+    history: import.meta.env.PROD ? createWebHistory(import.meta.env.BASE_URL) : createWebHashHistory(),
+    routes
+});
 
 router.beforeEach(async (to, form) => {
     if (!["/login"].includes(to.path) && (!localStorage.getItem("token"))) {
