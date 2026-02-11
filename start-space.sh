@@ -13,6 +13,10 @@ export USER_SERVER_PATH="${USER_SERVER_PATH:-user-server}"
 export MONOPOLY_SERVER_PATH="${MONOPOLY_SERVER_PATH:-monopoly-server}"
 export ICE_SERVER_PATH="${ICE_SERVER_PATH:-ice-server}"
 export USER_SERVER_HOST="${USER_SERVER_HOST:-127.0.0.1}"
+export ENABLE_ACCESS_LOG="${ENABLE_ACCESS_LOG:-true}"
+export ENABLE_HEALTH_CHECK_LOG="${ENABLE_HEALTH_CHECK_LOG:-true}"
+export HEALTH_CHECK_INTERVAL_SEC="${HEALTH_CHECK_INTERVAL_SEC:-30}"
+export HEALTH_CHECK_TIMEOUT_SEC="${HEALTH_CHECK_TIMEOUT_SEC:-5}"
 
 export MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 export MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -45,6 +49,17 @@ BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
 BACKUP_LAST_RUN_FILE="${BACKUP_LAST_RUN_FILE:-/tmp/monopoly-backup-last-run}"
+USER_HEALTH_URL="${USER_HEALTH_URL:-http://127.0.0.1:83/health}"
+MONOPOLY_HEALTH_URL="${MONOPOLY_HEALTH_URL:-http://127.0.0.1:84/health}"
+GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:7860/}"
+
+append_app_log() {
+    local line="$1"
+    echo "${line}"
+    if [ -n "${APP_LOG_FILE:-}" ]; then
+        printf '%s\n' "${line}" >> "${APP_LOG_FILE}" 2>/dev/null || true
+    fi
+}
 
 cleanup() {
     echo "[space] shutting down services..."
@@ -56,6 +71,9 @@ cleanup() {
     fi
     if [ -n "${INTERVAL_BACKUP_PID:-}" ]; then
         kill "${INTERVAL_BACKUP_PID}" >/dev/null 2>&1 || true
+    fi
+    if [ -n "${HEALTH_CHECK_PID:-}" ]; then
+        kill "${HEALTH_CHECK_PID}" >/dev/null 2>&1 || true
     fi
     pkill -f "node dist/fatpaper-user-server/app.js" || true
     pkill -f "node dist/monopoly-server/app.js" || true
@@ -268,7 +286,7 @@ backup_once() {
     fi
 
     if ! acquire_backup_lock; then
-        echo "[space] backup skipped: lock busy"
+        append_app_log "[space] backup skipped: lock busy"
         return 0
     fi
 
@@ -287,6 +305,9 @@ backup_once() {
     sync_backups_to_repo "${reason}" "${ts}" || rc=1
     if [ "${rc}" -eq 0 ]; then
         date +%s > "${BACKUP_LAST_RUN_FILE}" || true
+        append_app_log "[space] backup completed (${reason}) at ${ts}"
+    else
+        append_app_log "[space] backup failed (${reason}) at ${ts}"
     fi
 
     release_backup_lock
@@ -362,18 +383,56 @@ start_log_backup_watcher() {
         return
     fi
 
-    echo "[space] log-based backup enabled: every ${BACKUP_TRIGGER_LINES} lines"
+    append_app_log "[space] log-based backup enabled: every ${BACKUP_TRIGGER_LINES} lines"
     (
         local count=0
         tail -n0 -F "${APP_LOG_FILE}" 2>/dev/null | while IFS= read -r _line; do
             count=$((count + 1))
             if (( count % BACKUP_TRIGGER_LINES == 0 )); then
-                echo "[space] log lines reached ${count}, triggering backup..."
+                append_app_log "[space] log lines reached ${count}, triggering backup..."
                 backup_once "log-${count}" || echo "[space] log-trigger backup failed"
             fi
         done
     ) &
     LOG_WATCH_PID=$!
+}
+
+health_probe_once() {
+    local name="$1"
+    local url="$2"
+    local status
+    status="$(curl -sS -o /dev/null -w "%{http_code}" --max-time "${HEALTH_CHECK_TIMEOUT_SEC}" "${url}" 2>/dev/null || echo "000")"
+    case "${status}" in
+        200|301|302)
+            append_app_log "[health] ${name} ok (${status}) ${url}"
+            ;;
+        *)
+            append_app_log "[health] ${name} fail (${status}) ${url}"
+            ;;
+    esac
+}
+
+start_health_check_loop() {
+    if [ "${ENABLE_HEALTH_CHECK_LOG}" != "true" ]; then
+        return
+    fi
+    if ! [[ "${HEALTH_CHECK_INTERVAL_SEC}" =~ ^[0-9]+$ ]] || [ "${HEALTH_CHECK_INTERVAL_SEC}" -lt 5 ]; then
+        HEALTH_CHECK_INTERVAL_SEC=30
+    fi
+    if ! [[ "${HEALTH_CHECK_TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [ "${HEALTH_CHECK_TIMEOUT_SEC}" -lt 1 ]; then
+        HEALTH_CHECK_TIMEOUT_SEC=5
+    fi
+
+    append_app_log "[space] health-check loop enabled: every ${HEALTH_CHECK_INTERVAL_SEC}s"
+    (
+        while true; do
+            health_probe_once "user-server" "${USER_HEALTH_URL}"
+            health_probe_once "monopoly-server" "${MONOPOLY_HEALTH_URL}"
+            health_probe_once "gateway" "${GATEWAY_HEALTH_URL}"
+            sleep "${HEALTH_CHECK_INTERVAL_SEC}"
+        done
+    ) &
+    HEALTH_CHECK_PID=$!
 }
 
 mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}"
@@ -450,6 +509,7 @@ wait_http_service "monopoly-server" "http://127.0.0.1:84/health" 60 || true
 backup_once "startup" || echo "[space] startup backup failed"
 start_interval_backup_loop
 start_log_backup_watcher
+start_health_check_loop
 
 wait -n "${MYSQL_PID}" "${USER_SERVER_PID}" "${MONOPOLY_SERVER_PID}" "${NGINX_PID}"
 exit 1
