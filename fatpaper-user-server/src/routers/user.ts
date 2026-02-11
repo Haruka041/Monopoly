@@ -21,6 +21,13 @@ import { deleteFiles, uploadFile } from "../utils/file-uploader";
 
 const avatarMulter = multer({ dest: "public/avatars" });
 const routerUser = Router();
+const BACKUP_EVENT_FILE = process.env.BACKUP_EVENT_FILE || "/tmp/monopoly-backup-event.log";
+
+function emitBackupEvent(reason: string) {
+	try {
+		fs.appendFileSync(BACKUP_EVENT_FILE, `${Date.now()} ${reason}\n`, "utf8");
+	} catch {}
+}
 
 function getAuthUserId(req: any) {
 	const token = req.body?.token || req.header("authorization") || req.query?.token;
@@ -250,6 +257,7 @@ routerUser.post("/register", avatarMulter.single("avatar"), async (req, res) => 
 				msg: "注册成功",
 				data: user,
 			};
+			emitBackupEvent("user-register");
 			res.status(200).json(resContent);
 		} catch (e: any) {
 			const needKeyRefresh = typeof e?.message === "string" && e.message.includes("客户端密码解密失败");
@@ -299,6 +307,7 @@ routerUser.post("/profile/update", avatarMulter.single("avatar"), async (req, re
 			color,
 			avatar: avatarUrl,
 		});
+		emitBackupEvent("user-profile-update");
 		res.status(200).json(<ResInterface>{ status: 200, msg: "资料更新成功", data });
 	} catch (e: any) {
 		res.status(400).json(<ResInterface>{ status: 400, msg: e?.message || "资料更新失败" });
@@ -314,6 +323,7 @@ routerUser.post("/profile/change-password", async (req, res) => {
 			return;
 		}
 		await changeUserPasswordById(userId, oldPassword, newPassword);
+		emitBackupEvent("user-password-change");
 		res.status(200).json(<ResInterface>{ status: 200, msg: "密码修改成功" });
 	} catch (e: any) {
 		const needKeyRefresh = typeof e?.message === "string" && e.message.includes("客户端密码解密失败");

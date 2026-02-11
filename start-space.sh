@@ -58,6 +58,7 @@ BACKUP_REPO_ARCHIVE_PATH="${BACKUP_REPO_ARCHIVE_PATH:-${BACKUP_REPO_DIR}/${BACKU
 BACKUP_WORK_DIR="${BACKUP_WORK_DIR:-/tmp/monopoly-backup-work}"
 BACKUP_RESTORE_DIR="${BACKUP_RESTORE_DIR:-/tmp/monopoly-backup-restore}"
 BACKUP_LOCK_DIR="${BACKUP_LOCK_DIR:-/tmp/monopoly-backup-lock}"
+BACKUP_EVENT_FILE="${BACKUP_EVENT_FILE:-/tmp/monopoly-backup-event.log}"
 APP_LOG_FILE="${APP_LOG_FILE:-/tmp/space-app.log}"
 MYSQL_SOCKET="/run/mysqld/mysqld.sock"
 BACKUP_LAST_RUN_FILE="${BACKUP_LAST_RUN_FILE:-/tmp/monopoly-backup-last-run}"
@@ -383,6 +384,7 @@ backup_once() {
     local ts
     ts="$(date +%Y%m%d_%H%M%S)"
     append_app_log "[space] backup started (${reason}) at ${ts}"
+    log_db_snapshot_counts "before-${reason}"
 
     build_backup_archive "${ts}" "${reason}" || rc=1
     local archive_size
@@ -412,6 +414,15 @@ restore_sql_into_db() {
     else
         mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" "${db_name}" < "${dump_file}"
     fi
+}
+
+log_db_snapshot_counts() {
+    local label="$1"
+    local users_count
+    local maps_count
+    users_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM fatpaper_user.\`user\`;" 2>/dev/null || echo "NA")"
+    maps_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM monopoly.map;" 2>/dev/null || echo "NA")"
+    append_app_log "[space] db snapshot (${label}): users=${users_count}, maps=${maps_count}"
 }
 
 restore_latest_backup_if_exists() {
@@ -455,6 +466,7 @@ restore_latest_backup_if_exists() {
                     cp -af "${BACKUP_RESTORE_DIR}/assets/avatars/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
                 fi
                 append_app_log "[space] backup restore completed from ${BACKUP_ARCHIVE_NAME}"
+                log_db_snapshot_counts "after-archive-restore"
                 return 0
             fi
             append_app_log "[space] backup archive extracted but db files not found, fallback to legacy backups"
@@ -487,6 +499,7 @@ restore_latest_backup_if_exists() {
         append_app_log "[space] restoring legacy backup: ${latest_user}"
         restore_sql_into_db "fatpaper_user" "${latest_user}"
     fi
+    log_db_snapshot_counts "after-legacy-restore"
     return 0
 }
 
@@ -554,6 +567,31 @@ start_backup_heartbeat_loop() {
         done
     ) &
     BACKUP_HEARTBEAT_PID=$!
+}
+
+start_event_backup_watcher() {
+    if [ "${ENABLE_AUTO_BACKUP}" != "true" ]; then
+        return
+    fi
+
+    touch "${BACKUP_EVENT_FILE}" 2>/dev/null || true
+    append_app_log "[space] event-based backup enabled: file=${BACKUP_EVENT_FILE}"
+    (
+        while true; do
+            if [ -s "${BACKUP_EVENT_FILE}" ]; then
+                local event_reason
+                event_reason="$(tail -n1 "${BACKUP_EVENT_FILE}" 2>/dev/null | awk '{print $2}' | tr -cd '[:alnum:]_-')"
+                if [ -z "${event_reason}" ]; then
+                    event_reason="manual"
+                fi
+                : > "${BACKUP_EVENT_FILE}" 2>/dev/null || true
+                append_app_log "[space] backup event received: ${event_reason}"
+                backup_once "event-${event_reason}" || echo "[space] event-trigger backup failed"
+            fi
+            sleep 3
+        done
+    ) &
+    EVENT_BACKUP_PID=$!
 }
 
 health_probe_once() {
@@ -661,7 +699,7 @@ fi
 
 mkdir -p "$(dirname "${APP_LOG_FILE}")"
 touch "${APP_LOG_FILE}"
-append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, restoreOnStartup=${RESTORE_BACKUP_ON_STARTUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s"
+append_app_log "[space] runtime summary: healthLog=${ENABLE_HEALTH_CHECK_LOG}, healthInterval=${HEALTH_CHECK_INTERVAL_SEC}s, accessLog=${ENABLE_ACCESS_LOG}, backupAuto=${ENABLE_AUTO_BACKUP}, backupArchive=${BACKUP_ARCHIVE_NAME}, restoreOnStartup=${RESTORE_BACKUP_ON_STARTUP}, backupInterval=${BACKUP_INTERVAL_MIN}m, backupTrigger=${BACKUP_TRIGGER_LINES} lines, backupMinInterval=${BACKUP_MIN_INTERVAL_SEC}s, backupEventFile=${BACKUP_EVENT_FILE}"
 
 echo "[space] starting user-server..."
 (
@@ -684,6 +722,7 @@ backup_once "startup" || echo "[space] startup backup failed"
 start_interval_backup_loop
 start_log_backup_watcher
 start_backup_heartbeat_loop
+start_event_backup_watcher
 start_health_check_loop
 
 wait -n "${MYSQL_PID}" "${USER_SERVER_PID}" "${MONOPOLY_SERVER_PID}" "${NGINX_PID}"
