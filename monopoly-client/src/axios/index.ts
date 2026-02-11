@@ -1,8 +1,6 @@
 import axios from "axios";
 import FPMessage from "@/components/utils/fp-message";
-import { __MONOPOLYSERVER__ } from "@G/global.config";
 
-axios.defaults.baseURL = __MONOPOLYSERVER__;
 axios.defaults.headers.common["Authorization"] = (localStorage || window.localStorage).getItem("token");
 
 //请求拦截器
