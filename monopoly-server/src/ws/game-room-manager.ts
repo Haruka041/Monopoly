@@ -495,50 +495,65 @@ class GameRoom {
 			return;
 		}
 
-		const mapInfo = await getMapById(this.gameSetting.mapId, false);
-		if (!mapInfo) {
-			this.roomBroadcast(
-				toSocketMessage(SocketMsgType.MsgNotify, "", this.roomId, {
-					type: "error",
-					content: "加载地图失败，请重新选择地图",
-				})
-			);
-			return;
-		}
-
-		this.isStarted = true;
-		this.roomBroadcast(toSocketMessage(SocketMsgType.GameStart, "start", this.roomId));
-		this.roomInfoBroadcast();
-
-		const players = this.getUsers().map((u) => {
-			const { ws, isOffLine: _isOffLine, ...player } = u;
-			return player;
-		});
-
-		this.gameProcess = new GameProcess(mapInfo as any, this.gameSetting, players, this.ownerId, {
-			sendToUsers: (userIdList, msg) => {
-				this.sendToUsers(userIdList, msg);
-			},
-			onGameOver: () => {
-				this.handleGameOver();
-			},
-		});
-
-		this.gameProcess
-			.start()
-			.then(() => {
-				serverLog(`[room:${this.roomId}] game process finished`, "info");
-			})
-			.catch((err) => {
-				serverLog(`[room:${this.roomId}] game process crashed: ${err?.message || err}`, "error");
+		try {
+			const mapInfo = await getMapById(this.gameSetting.mapId, false);
+			if (!mapInfo) {
 				this.roomBroadcast(
 					toSocketMessage(SocketMsgType.MsgNotify, "", this.roomId, {
 						type: "error",
-						content: "游戏进程异常结束，请重新开始",
+						content: "加载地图失败，请重新选择地图",
 					})
 				);
-				this.handleGameOver();
+				return;
+			}
+
+			this.isStarted = true;
+			this.roomBroadcast(toSocketMessage(SocketMsgType.GameStart, "start", this.roomId));
+			this.roomInfoBroadcast();
+
+			const players = this.getUsers().map((u) => {
+				const { ws, isOffLine: _isOffLine, ...player } = u;
+				return player;
 			});
+
+			this.gameProcess = new GameProcess(mapInfo as any, this.gameSetting, players, this.ownerId, {
+				sendToUsers: (userIdList, msg) => {
+					this.sendToUsers(userIdList, msg);
+				},
+				onGameOver: () => {
+					this.handleGameOver();
+				},
+			});
+
+			this.gameProcess
+				.start()
+				.then(() => {
+					serverLog(`[room:${this.roomId}] game process finished`, "info");
+				})
+				.catch((err) => {
+					serverLog(`[room:${this.roomId}] game process crashed: ${err?.message || err}`, "error");
+					this.roomBroadcast(
+						toSocketMessage(SocketMsgType.MsgNotify, "", this.roomId, {
+							type: "error",
+							content: "游戏进程异常结束，请重新开始",
+						})
+					);
+					this.handleGameOver();
+				});
+		} catch (err) {
+			const errorMessage = err instanceof Error ? err.message : String(err);
+			serverLog(`[room:${this.roomId}] failed to initialize game: ${errorMessage}`, "error");
+			this.isStarted = false;
+			this.gameProcess?.destroy();
+			this.gameProcess = null;
+			this.roomBroadcast(
+				toSocketMessage(SocketMsgType.MsgNotify, "", this.roomId, {
+					type: "error",
+					content: `游戏初始化失败：${errorMessage || "未知错误"}`,
+				})
+			);
+			this.roomInfoBroadcast();
+		}
 	}
 
 	private emitOperationToGame(userId: string, operateType: OperateType | string, ...data: any[]) {
@@ -733,80 +748,106 @@ export function attachGameWsGateway(server: import("http").Server) {
 		});
 
 		ws.on("message", async (payload: RawData) => {
-			const msg = parseJsonSafe(payload.toString());
-			if (!msg) {
-				ws.send(
-					JSON.stringify(
-						toSocketMessage(SocketMsgType.MsgNotify, "", ws.__roomId, {
-							type: "error",
-							content: "消息格式错误",
-						})
-					)
-				);
-				return;
-			}
-
-			if (msg.type === SocketMsgType.JoinRoom) {
-				const user = msg.data as User;
-				const roomId = msg.roomId || ws.__roomId || "";
-				if (!roomId || roomId.length > 12) {
+			try {
+				const msg = parseJsonSafe(payload.toString());
+				if (!msg) {
 					ws.send(
 						JSON.stringify(
-							toSocketMessage(SocketMsgType.MsgNotify, "", roomId, {
+							toSocketMessage(SocketMsgType.MsgNotify, "", ws.__roomId, {
 								type: "error",
-								content: "不合法的房间ID",
+								content: "消息格式错误",
 							})
 						)
 					);
 					return;
 				}
-				if (!user?.userId || !user?.username) {
+
+				if (msg.type === SocketMsgType.JoinRoom) {
+					const user = msg.data as User;
+					const roomId = msg.roomId || ws.__roomId || "";
+					if (!roomId || roomId.length > 12) {
+						ws.send(
+							JSON.stringify(
+								toSocketMessage(SocketMsgType.MsgNotify, "", roomId, {
+									type: "error",
+									content: "不合法的房间ID",
+								})
+							)
+						);
+						return;
+					}
+					if (!user?.userId || !user?.username) {
+						ws.send(
+							JSON.stringify(
+								toSocketMessage(SocketMsgType.MsgNotify, "", roomId, {
+									type: "error",
+									content: "缺少用户信息",
+								})
+							)
+						);
+						return;
+					}
+					const result = await roomManager.handleJoin(roomId, user, ws);
+					if (!result.joined) return;
+					return;
+				}
+
+				if (msg.type === SocketMsgType.LeaveRoom) {
+					if (ws.__roomId && ws.__userId) {
+						roomManager.handleLeave(ws.__roomId, ws.__userId);
+						ws.close(1000, "leave-room");
+					}
+					return;
+				}
+
+				if (!ws.__roomId || !ws.__userId) {
 					ws.send(
 						JSON.stringify(
-							toSocketMessage(SocketMsgType.MsgNotify, "", roomId, {
+							toSocketMessage(SocketMsgType.MsgNotify, "", ws.__roomId, {
 								type: "error",
-								content: "缺少用户信息",
+								content: "尚未加入房间",
 							})
 						)
 					);
 					return;
 				}
-				const result = await roomManager.handleJoin(roomId, user, ws);
-				if (!result.joined) return;
-				return;
-			}
-
-			if (msg.type === SocketMsgType.LeaveRoom) {
-				if (ws.__roomId && ws.__userId) {
-					roomManager.handleLeave(ws.__roomId, ws.__userId);
-					ws.close(1000, "leave-room");
-				}
-				return;
-			}
-
-			if (!ws.__roomId || !ws.__userId) {
-				ws.send(
-					JSON.stringify(
-						toSocketMessage(SocketMsgType.MsgNotify, "", ws.__roomId, {
-							type: "error",
-							content: "尚未加入房间",
-						})
-					)
+				roomManager.handleMessage(ws.__roomId, ws.__userId, msg);
+			} catch (err) {
+				const errorMessage = err instanceof Error ? err.message : String(err);
+				serverLog(
+					`[ws] message handling failed room=${ws.__roomId || ""} user=${ws.__userId || ""} error=${errorMessage}`,
+					"error"
 				);
-				return;
+				try {
+					ws.send(
+						JSON.stringify(
+							toSocketMessage(SocketMsgType.MsgNotify, "", ws.__roomId, {
+								type: "error",
+								content: `服务器处理消息失败：${errorMessage || "未知错误"}`,
+							})
+						)
+					);
+				} catch {}
 			}
-			roomManager.handleMessage(ws.__roomId, ws.__userId, msg);
 		});
 
-		ws.on("close", () => {
+		ws.on("close", (code, reason) => {
 			ws.__isAlive = false;
+			serverLog(
+				`[ws] closed room=${ws.__roomId || ""} user=${ws.__userId || ""} code=${code} reason=${reason?.toString?.() || ""}`,
+				"warn"
+			);
 			if (ws.__roomId && ws.__userId) {
 				roomManager.handleDisconnect(ws.__roomId, ws.__userId);
 			}
 		});
 
-		ws.on("error", () => {
+		ws.on("error", (err) => {
 			ws.__isAlive = false;
+			serverLog(
+				`[ws] error room=${ws.__roomId || ""} user=${ws.__userId || ""} error=${err instanceof Error ? err.message : String(err)}`,
+				"error"
+			);
 			if (ws.__roomId && ws.__userId) {
 				roomManager.handleDisconnect(ws.__roomId, ws.__userId);
 			}
