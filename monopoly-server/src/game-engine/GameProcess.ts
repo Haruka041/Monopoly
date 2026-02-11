@@ -516,7 +516,8 @@ export class GameProcess {
 				isRoundEnd = true;
 				this.operateListener.remove(userId, OperateType.RollDice, handleRollDice);
 				this.operateListener.removeAll(userId, OperateType.UseChanceCard);
-				this.operateListener.emit(userId, OperateType.RollDice);
+				// Mark for auto roll in the next phase to avoid missing a pre-emitted event.
+				sourcePlayer.extras.autoRollNext = true;
 			};
 
 			this.operateListener.once(userId, OperateType.RollDice, handleRollDice);
@@ -650,7 +651,8 @@ export class GameProcess {
 
 	private async waitRollDice(player: Player) {
 		const userId = player.getId();
-		if (player.getIsOffline()) {
+		if (player.getIsOffline() || player.extras.autoRollNext) {
+			player.extras.autoRollNext = false;
 			await this.sleep(400);
 			this.gameBroadcast({ type: SocketMsgType.RollDiceStart, source: "server", data: "" });
 			this.dice.roll();

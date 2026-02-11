@@ -43,6 +43,7 @@ export BACKUP_BRANCH="${BACKUP_BRANCH:-main}"
 export BACKUP_HF_TOKEN="${BACKUP_HF_TOKEN:-${HF_TOKEN:-}}"
 export BACKUP_HF_USERNAME="${BACKUP_HF_USERNAME:-${HF_USERNAME:-__token__}}"
 export BACKUP_USE_HF_API="${BACKUP_USE_HF_API:-}"
+export MAP_LIST_SHOW_ALL="${MAP_LIST_SHOW_ALL:-true}"
 
 if [ -z "${BACKUP_USE_HF_API}" ]; then
     case "${BACKUP_REPO_TYPE}" in

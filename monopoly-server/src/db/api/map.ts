@@ -139,7 +139,8 @@ export const getMapsList = async (page: number, size: number, isAdmin: boolean) 
 		map.itemTypes = getItemTypesFromMapItems(map.mapItems) as any;
 		return map;
 	});
-	if (!isAdmin) {
+	const showAllMaps = process.env.MAP_LIST_SHOW_ALL !== "false";
+	if (!isAdmin && !showAllMaps) {
 		mapsList = mapsList.filter((m) => m.inUse);
 	}
 	return { mapsList, total };
