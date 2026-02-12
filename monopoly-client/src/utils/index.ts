@@ -385,6 +385,13 @@ export function remToPx(rem: number) {
 }
 
 export function compileTsToJs(code: string, types: string): string {
+	// If server already injected runtime prelude, avoid re-compiling and re-declaring globals.
+	// This prevents "Identifier 'utils' has already been declared" during game init.
+	const precompiledMarkers = [/PlayerEvents\["GetPropertiesList"\]/, /\bconst\s+utils\b/];
+	if (precompiledMarkers.some((re) => re.test(code))) {
+		return code;
+	}
+
 	const fullCode = `${types}\n${code}`;
 
 	// 编译选项，可以根据需求进行调整
