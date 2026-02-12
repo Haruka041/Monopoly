@@ -15,6 +15,13 @@ export function randomString(length: number) {
 }
 
 export function compileTsToJs(code: string, prelude: string): string {
+	// If the effect code already contains injected runtime prelude,
+	// avoid re-injecting to prevent "Identifier 'utils' has already been declared".
+	const precompiledMarkers = [/PlayerEvents\["GetPropertiesList"\]/, /\bconst\s+utils\b/, /\bvar\s+PlayerEvents\b/];
+	if (precompiledMarkers.some((re) => re.test(code))) {
+		return code;
+	}
+
 	const fullCode = `${prelude}\n${code}`;
 	const result = ts.transpileModule(fullCode, {
 		compilerOptions: {
