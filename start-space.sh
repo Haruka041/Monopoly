@@ -60,10 +60,12 @@ if [ -d /data ]; then
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/data/mysql}"
     BACKUP_DIR="${BACKUP_DIR:-/data/backups}"
     AVATAR_STORE_DIR="${AVATAR_STORE_DIR:-/data/avatar-store}"
+    MONOPOLY_ASSET_STORE_DIR="${MONOPOLY_ASSET_STORE_DIR:-/data/monopoly-asset-store}"
 else
     MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/var/lib/mysql}"
     BACKUP_DIR="${BACKUP_DIR:-/var/backups/monopoly}"
     AVATAR_STORE_DIR="${AVATAR_STORE_DIR:-/var/lib/monopoly-avatar-store}"
+    MONOPOLY_ASSET_STORE_DIR="${MONOPOLY_ASSET_STORE_DIR:-/var/lib/monopoly-asset-store}"
 fi
 
 BACKUP_REPO_DIR="${BACKUP_REPO_DIR:-/tmp/hf-backup-repo}"
@@ -81,6 +83,7 @@ MONOPOLY_HEALTH_URL="${MONOPOLY_HEALTH_URL:-http://127.0.0.1:84/health}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:7860/}"
 RUNTIME_CONFIG_FILE="${RUNTIME_CONFIG_FILE:-/var/www/monopoly-client/runtime-config.js}"
 USER_SERVER_AVATAR_DIR="${USER_SERVER_AVATAR_DIR:-/app/fatpaper-user-server/public/fatpaper/user/avatar}"
+MONOPOLY_ASSET_DIR="${MONOPOLY_ASSET_DIR:-/app/monopoly-server/public/monopoly}"
 
 append_app_log() {
     local line="$1"
@@ -124,6 +127,7 @@ safe_parse_positive_int() {
 
 prepare_avatar_storage() {
     mkdir -p "${AVATAR_STORE_DIR}"
+    mkdir -p "${MONOPOLY_ASSET_STORE_DIR}"
     mkdir -p "$(dirname "${USER_SERVER_AVATAR_DIR}")"
 
     if [ -e "${USER_SERVER_AVATAR_DIR}" ] && [ ! -L "${USER_SERVER_AVATAR_DIR}" ]; then
@@ -133,6 +137,19 @@ prepare_avatar_storage() {
 
     ln -sfn "${AVATAR_STORE_DIR}" "${USER_SERVER_AVATAR_DIR}"
     append_app_log "[space] avatar storage linked: ${USER_SERVER_AVATAR_DIR} -> ${AVATAR_STORE_DIR}"
+}
+
+prepare_monopoly_assets_storage() {
+    mkdir -p "${MONOPOLY_ASSET_STORE_DIR}"
+    mkdir -p "$(dirname "${MONOPOLY_ASSET_DIR}")"
+
+    if [ -e "${MONOPOLY_ASSET_DIR}" ] && [ ! -L "${MONOPOLY_ASSET_DIR}" ]; then
+        cp -a "${MONOPOLY_ASSET_DIR}/." "${MONOPOLY_ASSET_STORE_DIR}/" 2>/dev/null || true
+        rm -rf "${MONOPOLY_ASSET_DIR}"
+    fi
+
+    ln -sfn "${MONOPOLY_ASSET_STORE_DIR}" "${MONOPOLY_ASSET_DIR}"
+    append_app_log "[space] monopoly asset storage linked: ${MONOPOLY_ASSET_DIR} -> ${MONOPOLY_ASSET_STORE_DIR}"
 }
 
 cleanup() {
@@ -494,7 +511,7 @@ build_backup_archive() {
     local user_sql_file="${work_dir}/db/fatpaper_user.sql"
 
     rm -rf "${work_dir}"
-    mkdir -p "${work_dir}/db" "${work_dir}/assets/avatars" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}"
+    mkdir -p "${work_dir}/db" "${work_dir}/assets/avatars" "${work_dir}/assets/monopoly" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}" "${MONOPOLY_ASSET_STORE_DIR}"
 
     mono_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM monopoly.map;" 2>/dev/null || echo "NA")"
     users_count="$(mysql -h127.0.0.1 -P"${MYSQL_PORT}" -uroot "-p${MYSQL_ROOT_PASSWORD}" -Nse "SELECT COUNT(*) FROM fatpaper_user.\`user\`;" 2>/dev/null || echo "NA")"
@@ -506,6 +523,7 @@ build_backup_archive() {
     gzip -1f "${user_sql_file}" || return 1
 
     cp -af "${AVATAR_STORE_DIR}/." "${work_dir}/assets/avatars/" 2>/dev/null || true
+    cp -af "${MONOPOLY_ASSET_STORE_DIR}/." "${work_dir}/assets/monopoly/" 2>/dev/null || true
 
     cat > "${metadata_file}" <<EOF
 {
@@ -666,6 +684,9 @@ restore_latest_backup_if_exists() {
                 fi
                 if [ -d "${BACKUP_RESTORE_DIR}/assets/avatars" ]; then
                     cp -af "${BACKUP_RESTORE_DIR}/assets/avatars/." "${AVATAR_STORE_DIR}/" 2>/dev/null || true
+                fi
+                if [ -d "${BACKUP_RESTORE_DIR}/assets/monopoly" ]; then
+                    cp -af "${BACKUP_RESTORE_DIR}/assets/monopoly/." "${MONOPOLY_ASSET_STORE_DIR}/" 2>/dev/null || true
                 fi
                 append_app_log "[space] backup restore completed from ${BACKUP_ARCHIVE_NAME}"
                 log_db_snapshot_counts "after-archive-restore"
@@ -838,6 +859,7 @@ mkdir -p /run/mysqld "${MYSQL_DATA_DIR}" "${BACKUP_DIR}" "${AVATAR_STORE_DIR}"
 chown -R mysql:mysql /run/mysqld "${MYSQL_DATA_DIR}"
 write_runtime_ice_config || echo "[space] warning: write runtime ICE config failed"
 prepare_avatar_storage
+prepare_monopoly_assets_storage
 
 echo "[space] starting nginx on :7860..."
 nginx -g "daemon off;" &
