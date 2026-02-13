@@ -103,15 +103,17 @@ export async function deleteFiles(filePaths: string[]) {
 					}
 				}
 			);
-		} else {
-			try {
-				for (const filePath of filePaths) {
-					deleteFileFromLocal(`./public/${filePath}`);
-				}
-				resolve("success");
-			} catch (e: any) {}
+	} else {
+		try {
+			for (const filePath of filePaths) {
+				deleteFileFromLocal(`./public/${filePath}`);
+			}
+		} catch (e: any) {
+			console.warn("[deleteFiles] local delete failed:", e?.message || e);
 		}
-	});
+		resolve("success");
+	}
+});
 }
 
 function saveFileToLocal(file: UploadFile, targetPath: string) {

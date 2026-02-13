@@ -25,12 +25,23 @@ export class RoleCardPreviewerRenderer extends ThreeSceneBase {
 
 	public async loadRole(baseUrl: string, fileName: string) {
 		this.setLoadingMaskVisible(true);
-		this.role = new RoleModel(1, `${__PROTOCOL__}://${baseUrl}/`, fileName);
-		const model = await this.role.load();
-		this.scene.add(model);
-		this.setLoadingMaskVisible(false);
-		await this.role.doAnimation("hi", false);
-		this.role.doAnimation("idle");
+		try {
+			this.role = new RoleModel(1, `${__PROTOCOL__}://${baseUrl}/`, fileName);
+			const model = await this.role.load();
+			this.scene.add(model);
+
+			const animations = this.role.getAnimationList();
+			if (animations.includes("hi")) {
+				await this.role.doAnimation("hi", false);
+			}
+			if (animations.includes("idle")) {
+				this.role.doAnimation("idle");
+			}
+		} catch (err) {
+			console.error("[RoleCardPreviewerRenderer] loadRole failed", { baseUrl, fileName, err });
+		} finally {
+			this.setLoadingMaskVisible(false);
+		}
 	}
 
 	public destroy() {

@@ -36,7 +36,7 @@ const loadModel = async () => {
 	if (rolePreviewer && props.baseUrl && props.fileName) {
 		const _role = await rolePreviewer.loadRoleModel(props.baseUrl, props.fileName);
 		role = _role;
-		updateAnimationList(_role.getAnimationList());
+		updateAnimationList(_role ? _role.getAnimationList() : []);
 	}
 };
 

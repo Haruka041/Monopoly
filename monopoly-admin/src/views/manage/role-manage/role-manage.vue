@@ -4,6 +4,7 @@ import {deleteModel, getRoleList} from "@/utils/api/role";
 import {ChanceCard, Role} from "@/interfaces/interfaces";
 import {onMounted, ref} from "vue";
 import roleUpload from "./components/role-upload.vue";
+import { ElMessage } from "element-plus";
 
 //dialog控制
 const createRoleVisible = ref(false);
@@ -36,7 +37,15 @@ function handleEdit(role: Role){
 }
 
 const handleDelete = async (id: string) => {
-  await deleteModel(id)
+  try {
+    await deleteModel(id);
+    await loadRoleList();
+  } catch (e) {
+    ElMessage({
+      type: "error",
+      message: "删除失败，请查看控制台/网络请求",
+    });
+  }
 }
 
 const loadRoleList = async () => {
