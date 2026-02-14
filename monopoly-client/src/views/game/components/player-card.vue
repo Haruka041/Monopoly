@@ -46,7 +46,7 @@ watch(
 <template>
 	<div
 		class="player-card"
-		:class="{ is_bankrupted: _isBankrupted }"
+		:class="{ is_bankrupted: _isBankrupted, is_round: roundMark }"
 		:style="{ 'border-color': roundMark ? 'var(--color-third)' : '' }"
 	>
 		<div :style="{ color: _userInfo.color }" class="card-num">
@@ -64,6 +64,7 @@ watch(
 		<div class="info" :style="{ color: _userInfo.color }">
 			<span class="username">{{ _userInfo.username }}</span>
 			<span class="money">￥{{ displayNumber }}</span>
+			<span v-if="player.isOffline" class="offline-text">重连中</span>
 		</div>
 	</div>
 </template>
@@ -85,6 +86,7 @@ watch(
 	user-select: none;
 	margin: 0.2rem 0;
 	cursor: pointer;
+	transition: transform 0.2s ease, box-shadow 0.2s ease;
 
 	& > .card-num {
 		position: absolute;
@@ -101,6 +103,11 @@ watch(
 	&.is_bankrupted {
 		position: relative;
 		filter: grayscale(1);
+	}
+
+	&.is_round {
+		box-shadow: 0 0 0.6rem rgba(255, 193, 15, 0.6), 0 0 1rem rgba(255, 255, 255, 0.5);
+		transform: scale(1.02);
 	}
 
 	&.is_bankrupted::after {
@@ -165,6 +172,12 @@ watch(
 
 		& > .money {
 			font-size: 1.1rem;
+		}
+
+		& > .offline-text {
+			margin-top: 0.1rem;
+			font-size: 0.75rem;
+			color: var(--color-text-error);
 		}
 	}
 }

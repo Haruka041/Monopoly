@@ -107,12 +107,17 @@ function handleHideContainer() {
 					</div>
 					<div v-show="isGameLogShow" class="game_log_main-container">
 						<div class="game_log_content-container">
-							<TransitionGroup name="list">
-								<GameLogItem v-for="log in gameLogList" :key="log.id" :game-log="log" />
-							</TransitionGroup>
-						</div>
+						<TransitionGroup name="list">
+							<GameLogItem
+								v-for="log in gameLogList"
+								:key="log.id"
+								:game-log="log"
+								:highlight="log.id === gameLogStore.lastLogId"
+							/>
+						</TransitionGroup>
 					</div>
 				</div>
+			</div>
 			</div>
 
 			<!-- <div class="game_log-container">

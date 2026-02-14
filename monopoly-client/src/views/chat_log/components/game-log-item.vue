@@ -9,7 +9,7 @@ import { useDeviceStatus, useGameInfo, useMapData } from "@/store";
 import { App, Component, computed, createApp, h, ref, render, toRaw } from "vue";
 import { ArrivedEvent, ChanceCardInfo, PlayerInfo, Property, PropertyInfo } from "@/interfaces/game";
 
-const props = defineProps<{ gameLog: GameLog }>();
+const props = defineProps<{ gameLog: GameLog; highlight?: boolean }>();
 const gameInfoStore = useGameInfo();
 const mapInfoStroe = useMapData();
 
@@ -163,7 +163,7 @@ const logTime = computed(() => {
 </script>
 
 <template>
-	<div class="game-log-item">
+	<div class="game-log-item" :class="{ highlight: props.highlight }">
 		<span class="time">{{ logTime }}:</span>
 		<template v-for="log in gameLogArr">
 			<span v-if="log.type === GameLogType.Text" class="text-item">{{ log.content }}</span>
@@ -183,6 +183,13 @@ const logTime = computed(() => {
 .game-log-item {
 	margin-bottom: .3rem;
 	color: #4d4d4d;
+	padding: 0.2rem 0.3rem;
+	border-radius: 0.4rem;
+	transition: background-color 0.3s ease;
+
+	&.highlight {
+		animation: log-highlight 1.2s ease-out;
+	}
 	& > .time {
 		margin-right: .5rem;
 	}
@@ -192,6 +199,15 @@ const logTime = computed(() => {
 	& > .link-item {
 		text-decoration: underline;
 		cursor: pointer;
+	}
+}
+
+@keyframes log-highlight {
+	0% {
+		background-color: rgba(255, 193, 15, 0.35);
+	}
+	100% {
+		background-color: rgba(255, 193, 15, 0);
 	}
 }
 </style>

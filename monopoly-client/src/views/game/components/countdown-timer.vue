@@ -9,12 +9,13 @@ const utilStore = useUtil();
 const _roundTotalTime = roomInfoStore.gameSetting.roundTime;
 const _waitingFor = computed(() => utilStore.waitingFor);
 const _timeOut = computed(() => utilStore.timeOut);
+const _isUrgent = computed(() => !_timeOut.value && _waitingFor.value.remainingTime > 0 && _waitingFor.value.remainingTime <= 5);
 
 const _blockWidth = computed(() => `${(_waitingFor.value.remainingTime / _roundTotalTime) * 100}%`);
 </script>
 
 <template>
-	<div class="countdown-timer">
+	<div class="countdown-timer" :class="{ urgent: _isUrgent }">
 		<div class="block" :style="{ width: _blockWidth }"></div>
 		<div class="text" v-if="!_timeOut">
 			<FontAwesomeIcon icon="clock" /><span
@@ -62,6 +63,28 @@ const _blockWidth = computed(() => `${(_waitingFor.value.remainingTime / _roundT
 		& > * {
 			margin: 0 0.4rem;
 		}
+	}
+
+	&.urgent {
+		box-shadow: 0 0 1rem rgba(245, 108, 108, 0.8);
+		animation: urgent-pulse 0.9s ease-in-out infinite;
+		border-color: rgba(255, 255, 255, 0.8);
+
+		& > .block {
+			background-color: var(--color-text-error);
+		}
+	}
+}
+
+@keyframes urgent-pulse {
+	0% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(1.02);
+	}
+	100% {
+		transform: scale(1);
 	}
 }
 </style>

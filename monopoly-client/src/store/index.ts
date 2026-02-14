@@ -145,6 +145,20 @@ export const useGameInfo = defineStore("gameInfo", {
 	},
 });
 
+export type NetState = "idle" | "connecting" | "connected" | "reconnecting" | "offline";
+
+export const useNetStatus = defineStore("netStatus", {
+	state: () => {
+		return {
+			state: "idle" as NetState,
+			reconnectAttempt: 0,
+			reconnectMax: 0,
+			lastRestoredAt: 0,
+			lastChangeAt: 0,
+		};
+	},
+});
+
 export const useUtil = defineStore("util", {
 	state: () => {
 		return {
@@ -194,16 +208,22 @@ export const useGameLog = defineStore("gameLog", {
 		visible: boolean;
 		logLimit: number;
 		gameLogQueue: Array<GameLog>;
+		lastLogId: string;
+		lastLogAt: number;
 	} => {
 		return {
 			visible: false,
 			logLimit: 30,
 			gameLogQueue: new Array<GameLog>(),
+			lastLogId: "",
+			lastLogAt: 0,
 		};
 	},
 	actions: {
 		addNewLog(_newLog: GameLog) {
 			this.gameLogQueue.push(_newLog);
+			this.lastLogId = _newLog.id;
+			this.lastLogAt = Date.now();
 			if (this.gameLogQueue.length > this.logLimit) {
 				this.gameLogQueue.shift();
 			}

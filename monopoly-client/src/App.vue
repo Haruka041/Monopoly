@@ -8,6 +8,7 @@ import { useRoute } from "vue-router";
 import Chat from "@/views/chat_log/chat_log.vue";
 import MusicPlayer from "@/views/music_player/music_player.vue";
 import DanmakuContainer from "@/views/danmaku/danmaku_container.vue";
+import ConnectionBanner from "@/components/utils/connection-banner/connection-banner.vue";
 import { isMobileDevice } from "@/utils";
 
 const isMobile = isMobileDevice();
@@ -23,6 +24,7 @@ const isMusicPlayerVisiable = computed(() => router.name !== "login");
 	<DanmakuContainer v-if="canChat" />
 	<Background v-if="!isInGame" />
 	<Loading />
+	<ConnectionBanner />
 	<StatusBar />
 	<MusicPlayer v-if="isMusicPlayerVisiable" />
 	<RouterView></RouterView>

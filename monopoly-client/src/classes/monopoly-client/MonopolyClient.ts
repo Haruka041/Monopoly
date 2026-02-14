@@ -16,11 +16,13 @@ import {
 	useGameLog,
 	useLoading,
 	useMapData,
+	useNetStatus,
 	useRoomInfo,
 	useRoomList,
 	useUserInfo,
 	useUserList,
 	useUtil,
+	type NetState,
 } from "@/store";
 import router from "@/router";
 import { GameInfo, GameInitInfo, PropertyInfo, PlayerInfo } from "@/interfaces/game";
@@ -69,6 +71,23 @@ export class MonopolyClient {
 
 	private sleep(ms: number) {
 		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	private setNetState(state: NetState, options?: { attempt?: number; max?: number; restored?: boolean }) {
+		const netStore = useNetStatus();
+		netStore.state = state;
+		netStore.lastChangeAt = Date.now();
+		if (typeof options?.attempt === "number") netStore.reconnectAttempt = options.attempt;
+		if (typeof options?.max === "number") netStore.reconnectMax = options.max;
+		if (options?.restored) {
+			const stamp = Date.now();
+			netStore.lastRestoredAt = stamp;
+			window.setTimeout(() => {
+				if (netStore.lastRestoredAt === stamp) {
+					netStore.lastRestoredAt = 0;
+				}
+			}, 3000);
+		}
 	}
 
 	private openSocket(wsUrl: string, timeoutMs: number) {
@@ -142,6 +161,7 @@ export class MonopolyClient {
 
 	public async joinRoom(roomId: string) {
 		try {
+			this.setNetState("connecting");
 			const data = await joinRoomApi(roomId);
 			this.roomId = roomId;
 			this.socketPath = data.wsPath || `${__MONOPOLYSERVER__}/ws/game`;
@@ -198,6 +218,7 @@ export class MonopolyClient {
 			}
 			this.isOnline = true;
 			this.reconnecting = false;
+			this.setNetState("connected", { restored: isReconnect, attempt: 0, max: 0 });
 			useLoading().hideLoading();
 
 			this.resetHeartBeatTimer();
@@ -332,9 +353,9 @@ export class MonopolyClient {
 		}
 
 		this.reconnecting = true;
-		useLoading().showLoading("网络抖动，正在重连...");
+		this.setNetState("reconnecting", { attempt: 0, max: this.reconnectMaxAttempts });
 		for (let attempt = 1; attempt <= this.reconnectMaxAttempts; attempt++) {
-			useLoading().text = `网络中断，正在重连 (${attempt}/${this.reconnectMaxAttempts})...`;
+			this.setNetState("reconnecting", { attempt, max: this.reconnectMaxAttempts });
 			try {
 				await this.linkToGameServer(this.roomId, {
 					isReconnect: true,
@@ -347,7 +368,7 @@ export class MonopolyClient {
 				}
 			}
 		}
-		useLoading().hideLoading();
+		this.setNetState("offline", { attempt: 0, max: 0 });
 		this.reconnecting = false;
 		FPMessage({
 			type: "error",
@@ -363,6 +384,7 @@ export class MonopolyClient {
 		if (this.manualClose) return;
 		if (!this.isOnline && this.reconnecting) return;
 		this.isOnline = false;
+		this.setNetState("reconnecting", { attempt: 0, max: this.reconnectMaxAttempts });
 		void this.reconnectToRoom();
 	}
 
@@ -619,6 +641,7 @@ export class MonopolyClient {
 
 	public async leaveRoom() {
 		this.isOnline = false;
+		this.setNetState("idle", { attempt: 0, max: 0 });
 		await this.sendMsg(SocketMsgType.LeaveRoom, "");
 		this.destory();
 		const roomInfoStore = useRoomInfo();
@@ -677,6 +700,7 @@ export class MonopolyClient {
 
 	public destory() {
 		this.isOnline = false;
+		this.setNetState("idle", { attempt: 0, max: 0 });
 		this.handleNoHeart.cancel();
 		this.intervalList.forEach((i) => {
 			clearInterval(i);
