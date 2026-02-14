@@ -358,6 +358,7 @@ function handleUpdateGameSetting() {
 		color: var(--color-third);
 		user-select: none;
 		font-size: 1rem;
+		line-height: 1.4;
 		& > span {
 			font-size: 1.1rem;
 			margin: 0 0.8rem;
@@ -366,6 +367,7 @@ function handleUpdateGameSetting() {
 			border-radius: 0.4rem;
 			padding: 0 0.4rem;
 			cursor: pointer;
+			word-break: break-all;
 		}
 	}
 }

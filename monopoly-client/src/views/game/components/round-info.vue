@@ -41,14 +41,17 @@ const _isMyTurn = computed(() => gameInfoStore.isMyTurn);
 	& > .round {
 		font-size: 1.5rem;
 		margin-right: 2rem;
+		line-height: 1.2;
 	}
 
 	& > .multiplier {
 		font-size: 1rem;
+		line-height: 1.2;
 	}
 
 	& > .turn {
 		font-size: 0.95rem;
+		line-height: 1.2;
 		b {
 			margin: 0 0.2rem;
 			color: #ffffff;

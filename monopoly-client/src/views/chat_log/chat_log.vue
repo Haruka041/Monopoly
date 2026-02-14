@@ -170,6 +170,7 @@ function handleHideContainer() {
 		width: fit-content;
 		padding: 0.4rem 1.2rem;
 		font-size: 0.9rem;
+		letter-spacing: 0.01em;
 		box-shadow: var(--box-shadow);
 		text-align: center;
 		color: var(--color-text-white);
@@ -197,6 +198,8 @@ function handleHideContainer() {
 				width: 100%;
 				padding: 0.6rem;
 				box-sizing: border-box;
+				line-height: 1.45;
+				letter-spacing: 0.01em;
 				overflow-y: scroll;
 				overflow-x: hidden;
 				backdrop-filter: blur(0.13rem);

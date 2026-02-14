@@ -109,6 +109,8 @@ function handleRollDice() {
 	padding: 0.2rem 0.6rem;
 	border-radius: 999px;
 	font-size: 0.85rem;
+	line-height: 1.2;
+	letter-spacing: 0.01em;
 	background-color: rgba(0, 0, 0, 0.35);
 	color: #ffffff;
 	box-shadow: var(--box-shadow);

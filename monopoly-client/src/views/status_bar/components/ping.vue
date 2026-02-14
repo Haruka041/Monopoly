@@ -60,6 +60,7 @@ const statusTextColor = computed(() => {
   flex-direction: column;
   align-items: flex-end;
   line-height: 1.1rem;
+  letter-spacing: 0.01em;
 }
 
 .ping-line {
@@ -71,5 +72,6 @@ const statusTextColor = computed(() => {
 .status-line {
   font-size: 0.78rem;
   opacity: 0.9;
+  line-height: 1.1;
 }
 </style>

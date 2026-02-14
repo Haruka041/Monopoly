@@ -186,6 +186,7 @@ const logTime = computed(() => {
 	padding: 0.2rem 0.3rem;
 	border-radius: 0.4rem;
 	transition: background-color 0.3s ease;
+	line-height: 1.45;
 
 	&.highlight {
 		animation: log-highlight 1.2s ease-out;

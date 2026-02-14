@@ -59,6 +59,8 @@ const _blockWidth = computed(() => `${(_waitingFor.value.remainingTime / _roundT
 		color: var(--color-text-white);
 		white-space: nowrap;
 		z-index: 2;
+		line-height: 1.2;
+		letter-spacing: 0.01em;
 
 		& > * {
 			margin: 0 0.4rem;

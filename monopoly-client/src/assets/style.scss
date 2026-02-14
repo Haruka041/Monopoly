@@ -117,6 +117,34 @@ html {
   --text-shadow-surround-white: #fff -1px 0 0, #fff 1px 0 0, #fff 0 1px 0, #fff 0 -1px 0;
 }
 
+/* Typography tuning: global readability */
+body {
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Safer wrapping for long mixed-language content */
+p,
+span,
+li,
+label,
+button,
+input,
+textarea,
+.text-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Keep controls compact unless explicitly overridden */
+button,
+.button {
+  white-space: nowrap;
+}
+
 ::-webkit-scrollbar {
   width: .6rem;
   height: .6rem;
