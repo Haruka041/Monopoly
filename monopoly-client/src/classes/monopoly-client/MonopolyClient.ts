@@ -167,7 +167,7 @@ export class MonopolyClient {
 			setInterval(() => {
 				this.sendHeartTime = Date.now();
 				this.sendMsg(SocketMsgType.Heart, "");
-			}, 3000)
+			}, 5000)
 		);
 	}
 
@@ -377,7 +377,7 @@ export class MonopolyClient {
 		() => {
 			this.handleSocketDisconnected("heart-timeout");
 		},
-		20000,
+		45000,
 		true
 	);
 

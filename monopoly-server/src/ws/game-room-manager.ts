@@ -14,6 +14,7 @@ type WsClient = WebSocket & {
 	__roomId?: string;
 	__userId?: string;
 	__isAlive?: boolean;
+	__missedPong?: number;
 };
 
 type RoomUserSession = UserInRoomInfo & {
@@ -699,10 +700,15 @@ export function attachGameWsGateway(server: import("http").Server) {
 		wss.clients.forEach((client) => {
 			const ws = client as WsClient;
 			if (ws.__isAlive === false) {
-				try {
-					ws.terminate();
-				} catch {}
-				return;
+				ws.__missedPong = (ws.__missedPong ?? 0) + 1;
+				if (ws.__missedPong >= 2) {
+					try {
+						ws.terminate();
+					} catch {}
+					return;
+				}
+			} else {
+				ws.__missedPong = 0;
 			}
 			ws.__isAlive = false;
 			try {
@@ -736,6 +742,7 @@ export function attachGameWsGateway(server: import("http").Server) {
 	wss.on("connection", (rawWs, req) => {
 		const ws = rawWs as WsClient;
 		ws.__isAlive = true;
+		ws.__missedPong = 0;
 		const parsed = new URL(req.url || "", "http://localhost");
 		const queryRoomId = parsed.searchParams.get("roomId") || "";
 
@@ -745,6 +752,7 @@ export function attachGameWsGateway(server: import("http").Server) {
 
 		ws.on("pong", () => {
 			ws.__isAlive = true;
+			ws.__missedPong = 0;
 		});
 
 		ws.on("message", async (payload: RawData) => {

@@ -31,9 +31,9 @@ export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$MYSQL_PASSWORD}"
 
 export ENABLE_AUTO_BACKUP="${ENABLE_AUTO_BACKUP:-true}"
 export BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-100}"
-export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-1}"
-export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-100}"
-export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-60}"
+export BACKUP_INTERVAL_MIN="${BACKUP_INTERVAL_MIN:-30}"
+export BACKUP_TRIGGER_LINES="${BACKUP_TRIGGER_LINES:-3000}"
+export BACKUP_MIN_INTERVAL_SEC="${BACKUP_MIN_INTERVAL_SEC:-1800}"
 export BACKUP_HEARTBEAT_INTERVAL_SEC="${BACKUP_HEARTBEAT_INTERVAL_SEC:-60}"
 export BACKUP_ARCHIVE_NAME="${BACKUP_ARCHIVE_NAME:-data_backup.zip}"
 export RESTORE_BACKUP_ON_STARTUP="${RESTORE_BACKUP_ON_STARTUP:-true}"
@@ -538,7 +538,7 @@ EOF
     rm -f "${output_file}"
     (
         cd "${work_dir}"
-        zip -q -r -9 "${output_file}" db assets meta.json
+        zip -q -r -1 "${output_file}" db assets meta.json
     ) || return 1
 
     return 0
